@@ -124,16 +124,46 @@ function prog(t,p){
 }
 
 function hourly(lines){
+  // Prefer the employee's actual regular hourly-rate fields.
+  // Do not mix in minimum-wage notices or overtime tariffs.
   const vals=[];
-  for(const l of lines)if(/ע\.\s*שעה|ערך\s*שעה\s*\/\s*יום/.test(l))
-    vals.push(...lineNums(l).filter(v=>v>=20&&v<=200));
+  for(const l of lines){
+    if(!/(?:ע\.\s*שעה|ערך\s*שעה\s*\/\s*יום)/.test(l))continue;
+    const xs=lineNums(l).filter(v=>v>=20&&v<=250);
+    const decimal=xs.filter(v=>Math.abs(v-Math.round(v))>.005&&v<180);
+    if(decimal.length)vals.push(Math.min(...decimal));
+  }
   return median(vals);
 }
 function metricFromRow(lines,code,rate,factor){
   const row=lines.find(l=>new RegExp("\\b"+code+"\\b").test(l));
   if(!row)return null;
-  const xs=lineNums(row).filter(v=>v!==Number(code)&&v>0&&v<100000);
+  const xs=[...new Set(lineNums(row).filter(v=>v!==Number(code)&&v>0&&v<100000).map(v=>Math.round(v*10000)/10000))];
   if(!xs.length)return null;
+
+  // Reconstruct amount = quantity × tariff directly from the row.
+  // This lets us infer the base hourly rate even before it is known.
+  let best=null;
+  for(const q of xs){
+    if(q<=0||q>350)continue;
+    for(const tariff of xs){
+      if(tariff<10||tariff>500||tariff===q)continue;
+      const base=tariff/factor;
+      if(base<20||base>250)continue;
+      const product=q*tariff;
+      for(const amount of xs){
+        if(amount<=0||amount===q||amount===tariff)continue;
+        const err=Math.abs(amount-product)/Math.max(1,amount);
+        if(err>.025)continue;
+        const ratePenalty=rate?Math.abs(base-rate)/Math.max(1,rate)*.05:0;
+        const score=err+ratePenalty;
+        if(!best||score<best.score)best={q,tariff,amount,base,score};
+      }
+    }
+  }
+  if(best)return {q:best.q,tariff:best.tariff,amount:best.amount,base:best.base};
+
+  // Fallback for unusual layouts when a regular hourly rate is already known.
   const target=rate?rate*factor:null;
   if(target){
     const tariff=xs.filter(v=>v>=5&&v<=500).sort((a,b)=>Math.abs(a-target)-Math.abs(b-target))[0];
@@ -141,7 +171,7 @@ function metricFromRow(lines,code,rate,factor){
       for(const amount of xs){
         if(amount<=tariff*1.2)continue;
         const q=amount/tariff,shown=xs.find(v=>Math.abs(v-q)<=Math.max(.08,q*.02));
-        if(q>0&&q<350&&shown!=null)return {q:shown,tariff,amount};
+        if(q>0&&q<350&&shown!=null)return {q:shown,tariff,amount,base:tariff/factor};
       }
     }
   }
@@ -161,13 +191,23 @@ function parse(kind,text,file){
   const lines=clean.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
   const d={kind,fileName:file.name,month:month(clean),hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40};
   if(kind==="payslip"){
-    d.hourly=hourly(lines);
+    const explicitRate=hourly(lines);
+    const inferredRates=[];
+    d.hourlySource=null;
     for(const o of OT){
-      const m=metricFromRow(lines,o.code,d.hourly,o.f);
-      if(m){d[o.k]=m.q;d.tariffs[o.k]=m.tariff}
+      const m=metricFromRow(lines,o.code,explicitRate,o.f);
+      if(m){
+        d[o.k]=m.q;d.tariffs[o.k]=m.tariff;
+        if(Number.isFinite(m.base))inferredRates.push(m.base);
+      }
     }
-    const on=metricFromRow(lines,"4392",d.hourly,1);
-    if(on){d.oncall=on.q;d.tariffs.oncall=on.tariff}
+    const on=metricFromRow(lines,"4392",explicitRate,1);
+    if(on){
+      d.oncall=on.q;d.tariffs.oncall=on.tariff;
+      if(Number.isFinite(on.base))inferredRates.push(on.base);
+    }
+    d.hourly=Number.isFinite(explicitRate)?explicitRate:median(inferredRates);
+    d.hourlySource=Number.isFinite(explicitRate)?"ע.שעה / ערך שעה בתלוש":(Number.isFinite(d.hourly)?"נגזר מתעריפי עבודה נוספת":null);
   }else{
     d.ot125=fallbackNear(clean,/(?:125\s*%|שעות\s*נוספות\s*125)[^0-9\n]{0,45}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
     d.ot150=fallbackNear(clean,/(?:150\s*%|שעות\s*נוספות\s*150)[^0-9\n]{0,45}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
@@ -261,13 +301,28 @@ function readCount(d){
   if(!d)return 0;
   return OT.reduce((n,o)=>n+(Number.isFinite(d[o.k])?1:0),0);
 }
+function readLabels(d){
+  if(!d)return [];
+  return OT.filter(o=>Number.isFinite(d[o.k])).map(o=>o.label);
+}
+function missingLabels(d){
+  if(!d)return OT.map(o=>o.label);
+  return OT.filter(o=>!Number.isFinite(d[o.k])).map(o=>o.label);
+}
+function monthKey(mm){
+  if(!mm||mm==="לא זוהה")return -1;
+  const [m,y]=mm.split("/").map(Number);
+  return y*12+m;
+}
 function render(){
   S.issues=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
-  const pays=S.docs.filter(d=>d.kind==="payslip"),rate=median(pays.map(d=>d.hourly));
+  const pays=S.docs.filter(d=>d.kind==="payslip");
+  const rated=pays.filter(d=>Number.isFinite(d.hourly)).sort((a,b)=>monthKey(b.month)-monthKey(a.month));
+  const rateDoc=rated[0]||null,rate=rateDoc?.hourly??null;
   $("autoProfile").innerHTML=[
-    ["ערך שעה שזוהה",rate?"₪"+fmt(rate):"לא זוהה"],
+    ["ערך שעה רגילה"+(rateDoc?.month&&rateDoc.month!=="לא זוהה"?" · "+rateDoc.month:""),rate!=null?"₪"+fmt(rate):"לא זוהה"],
+    ["מקור ערך השעה",rateDoc?.hourlySource||"לא זוהה"],
     ["חודשי תלוש שנקראו",String(pays.filter(d=>d.month!=="לא זוהה").length)],
-    ["מקור הנתונים","התלוש שהועלה"],
     ["שמירת מסמכים","לא נשמרים במאגר"]
   ].map(([k,v])=>'<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
   $("autoProfileSection").classList.remove("hidden");
@@ -281,10 +336,23 @@ function render(){
       if(fallback)flags.push(["info","המסמכים הותאמו לפי סדר ההעלאה כי החודש לא זוהה בוודאות באחד מהם."]);
       if(lag)flags.push(["info","שיוך חודש: דוח הנוכחות של חודש העבודה הותאם לתלוש של החודש הבא (M→M+1), בהתאם לדפוס שאומת בתלושים שנבדקו. ההשוואה כוללת את כל חודש הנוכחות — ללא חיתוך אוטומטי ב־24/25."]);
       if(same)flags.push(["warn","נמצא תלוש מאותו חודש, אך בדוגמאות שאומתו דוח חודש העבודה משולם בדרך כלל בתלוש של החודש הבא. מומלץ לצרף גם את תלוש M+1."]);
-      const ds=details(a,p);gap=Number.isFinite(a.otTotal)&&Number.isFinite(p.otTotal)?a.otTotal-p.otTotal:null;
-      if(!ds.length&&gap!=null){good++;cls="ok";title="התאמה טובה";flags.push(["ok","רכיבי השעות שנקראו תואמים בקירוב."])}
-      else if(ds.length){
-        const big=ds.some(x=>Math.abs(x.g)>1);cls=big?"bad":"warn";title=big?"פער משמעותי לבדיקה":"פער קטן לבדיקה";big?bad++:warn++;
+      const ac=readCount(a),pc=readCount(p);
+      const common=OT.filter(o=>Number.isFinite(a?.[o.k])&&Number.isFinite(p?.[o.k]));
+      const complete=ac===OT.length&&pc===OT.length;
+      const ds=details(a,p);
+      gap=complete&&Number.isFinite(a.otTotal)&&Number.isFinite(p.otTotal)?a.otTotal-p.otTotal:null;
+
+      if(!complete){
+        S.insufficient=true;
+        const missA=missingLabels(a),missP=missingLabels(p);
+        flags.push(["warn","קריאה חלקית: המערכת משווה רק את מה שנקרא בפועל מהמסמכים שהועלו. רכיבים משותפים שניתן לבדוק: "+common.length+"/"+OT.length+"."]);
+        if(missA.length)flags.push(["info","לא נקראו מדוח הנוכחות: "+missA.join(", ")+"."]);
+        if(missP.length)flags.push(["info","לא נקראו מהתלוש: "+missP.join(", ")+"."]);
+      }
+
+      if(ds.length){
+        const big=ds.some(x=>x.type==="missing"||Math.abs(x.g)>1);
+        cls=big?"bad":"warn";title=big?"פער משמעותי לבדיקה":"פער קטן לבדיקה";big?bad++:warn++;
         ds.forEach(x=>{
           const level=(x.type==="missing"||Math.abs(x.g)>1)?"bad":"warn";
           const msg=x.type==="missing"
@@ -297,13 +365,17 @@ function render(){
               :x.label+": בדוח נקראו "+fmt(a[x.k])+" שעות ובתלוש "+fmt(p[x.k])+" שעות; חסרות לכאורה "+hh(x.g)+" שעות לבדיקה."});
           }
         });
+      }else if(complete&&gap!=null){
+        good++;cls="ok";title="התאמה טובה";flags.push(["ok","כל ארבעת רכיבי השעות שנקראו תואמים בקירוב."]);
+      }else if(common.length){
+        warn++;title="השוואה חלקית";
+        flags.push(["ok","ברכיבים המשותפים שנקראו משני המסמכים לא זוהה כרגע פער מעבר לסף. הבדיקה אינה מלאה."]);
       }else{
-        warn++;S.insufficient=true;title="לא ניתן להשוות";
-        const ac=readCount(a),pc=readCount(p);
+        warn++;title="לא ניתן להשוות";
         if(ac===0&&pc===0)flags.push(["warn","החודש זוהה, אבל טבלאות השעות לא נקראו משני המסמכים. אין כרגע בסיס לקבוע אם יש התאמה או פער."]);
         else if(ac===0)flags.push(["warn","דוח הנוכחות זוהה, אבל רכיבי השעות שבו לא נקראו. מומלץ להעלות PDF מקורי ולא צילום מסך."]);
         else if(pc===0)flags.push(["warn","התלוש זוהה, אבל רכיבי השעות שבו לא נקראו. מומלץ להעלות PDF מקורי ולא צילום מסך."]);
-        else flags.push(["warn","לא נקראו מספיק רכיבי שעות משני המסמכים כדי לבצע השוואה אמינה."]);
+        else flags.push(["warn","אין כרגע רכיב שעות משותף שנקרא משני המסמכים."]);
       }
       if(Number.isFinite(p.oncall))flags.push(["info","כוננות חול בתלוש: "+fmt(p.oncall)+" שעות/כמות לחישוב שכר. זה אינו מספר הכוננויות."]);
       const est=estimate(a,p);if(est)flags.push(["info","אומדן כספי גולמי לפי התעריפים שנקראו: כ־₪"+fmt(est)+"."]);
