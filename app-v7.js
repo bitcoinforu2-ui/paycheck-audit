@@ -355,10 +355,329 @@ function renderTaxAnalysis(pays){
   return {alerts,hasData:series.length>0};
 }
 
+
+function mirroredNums(line){
+  const xs=lineNums(line);
+  if(xs.length>=4&&xs.length%2===0){
+    const n=xs.length/2,a=xs.slice(0,n),b=xs.slice(n);
+    const mirror=a.every((v,i)=>Math.abs(v-b[n-1-i])<.001);
+    if(mirror)return a;
+  }
+  return xs;
+}
+function findCodeRow(lines,code){
+  return lines.find(l=>new RegExp("(^|[^0-9])"+String(code)+"([^0-9]|$)").test(l))||null;
+}
+function codeTotal(lines,code,{min=0,max=1000000}={}){
+  const row=findCodeRow(lines,code);if(!row)return null;
+  const xs=mirroredNums(row).filter(v=>v!==Number(code)&&v>=min&&v<=max);
+  return xs.length?Math.max(...xs):null;
+}
+function labeledNumber(lines,re,{min=-Infinity,max=Infinity,preferDecimal=false}={}){
+  for(let i=0;i<lines.length;i++){
+    if(!re.test(lines[i]))continue;
+    const candidates=[];
+    for(const line of lines.slice(Math.max(0,i-1),Math.min(lines.length,i+2))){
+      candidates.push(...mirroredNums(line).filter(v=>v>=min&&v<=max));
+    }
+    if(!candidates.length)continue;
+    if(preferDecimal){
+      const dec=candidates.filter(v=>Math.abs(v-Math.round(v))>.005);
+      if(dec.length)return dec[0];
+    }
+    return candidates[0];
+  }
+  return null;
+}
+function summaryPayroll(lines){
+  const idx=lines.findIndex(l=>/סכום\s*בבנק/.test(l)&&/שכר\s*נטו/.test(l)&&/שכר\s*בסיס/.test(l));
+  if(idx<0)return null;
+  for(let j=Math.max(0,idx-2);j<=Math.min(lines.length-1,idx+2);j++){
+    if(j===idx)continue;
+    const xs=mirroredNums(lines[j]).filter(v=>Math.abs(v)<10000000);
+    if(xs.length>=13){
+      const a=xs.slice(0,13);
+      const out={bank:a[0],externalDeductions:a[1],officeDeductions:a[2],net:a[3],mandatoryDeductions:a[4],totalPayments:a[5],differences:a[6],grossCurrent:a[7],otherPayments:a[8],expenseRefunds:a[9],extraWork:a[10],additions:a[11],baseSalary:a[12]};
+      const check1=Math.abs((out.totalPayments-out.mandatoryDeductions)-out.net);
+      const check2=Math.abs((out.net-out.officeDeductions-out.externalDeductions)-out.bank);
+      if(check1<20&&check2<20)return out;
+    }
+  }
+  return null;
+}
+function leaveRow(lines,re){
+  const row=lines.find(l=>re.test(l));
+  if(!row)return null;
+  const xs=mirroredNums(row).filter(v=>v>-1000&&v<1000);
+  if(xs.length<4)return null;
+  const a=xs.slice(0,4);
+  // Printed order in the supported municipal payslip: new balance, used, credit, previous.
+  const out={newBalance:a[0],used:a[1],credit:a[2],previous:a[3]};
+  const err=Math.abs((out.previous+out.credit-out.used)-out.newBalance);
+  out.mathError=err;
+  return err<3?out:null;
+}
+function fundRow(lines,re){
+  for(const line of lines){
+    if(!re.test(line))continue;
+    const xs=mirroredNums(line).filter(v=>v>0&&v<1000000);
+    if(xs.length<2)continue;
+    const gross=Math.max(...xs);
+    const pcts=xs.filter(v=>v>=.1&&v<=20);
+    for(const pct of pcts){
+      const expected=gross*pct/100;
+      const amount=xs.filter(v=>v!==gross&&v!==pct).sort((a,b)=>Math.abs(a-expected)-Math.abs(b-expected))[0];
+      if(Number.isFinite(amount)&&Math.abs(amount-expected)<=Math.max(2,expected*.03))return {pct,gross,amount};
+    }
+  }
+  return null;
+}
+function recurrentComponents(lines){
+  const defs=[
+    ["יסוד",/(?:^|\s)יסוד(?:\s|$)/],
+    ["תוספת ותק",/תוספת\s*ותק/],
+    ["איזון משרדי",/איזון\s*משרדי/],
+    ["שקלית מדורג",/שקלית\s*מדורג/],
+    ["ע״נ פק.חניה",/ע["״']?נ\s*פק\.?\s*חניה/],
+    ["תוספת שכר",/תוספת\s*שכר\s*3[.,]?6/],
+    ["הסכם ב.י. 2003",/הסכם\s*ב\.?י\.?\s*2003/],
+    ["תוספת 1997",/תוספת\s*1997/],
+    ["תוספת 2011",/תוספת\s*2011/],
+    ["תוספת מעו״ף",/תוספת\s*מעו/],
+    ["תוספת אחוזית 2016",/תוספת\s*אחוזית\s*2016/],
+    ["תוספת שקלית 2016",/תוספת\s*שקלית\s*2016/],
+    ["תוספת שקלית 2023",/תוספת\s*שקלית\s*2023/],
+    ["תוספת אחוזית 2024",/תוספת\s*אחוזית\s*2024/],
+    ["רכב קבועות ברוטו",/רכב\s*קבועות\s*ברוטו/],
+    ["רכב קבועות נטו",/רכב\s*קבועות\s*נטו/],
+    ["טלפון",/(?:^|\s)טלפון(?:\s|$)/],
+    ["נסיעות",/(?:^|\s)נסיעות(?:\s|$)/]
+  ];
+  const out={};
+  for(const [name,re] of defs)out[name]=lines.some(l=>re.test(l));
+  return out;
+}
+function extractPayrollGuard(clean,lines){
+  const summary=summaryPayroll(lines);
+  const grossBL=codeTotal(lines,94010,{min:100,max:1000000});
+  const ni=codeTotal(lines,91001,{min:0,max:50000});
+  const health=codeTotal(lines,92041,{min:0,max:50000});
+  const pension=fundRow(lines,/פנסיה/);
+  const credits=labeledNumber(lines,/סך\s*נקודות\s*זיכוי/,{min:0,max:20,preferDecimal:true});
+  const fraction=labeledNumber(lines,/חלקיות\s*ותק/,{min:.05,max:1.5,preferDecimal:true});
+  return {
+    summary,
+    leave:{
+      vacation:leaveRow(lines,/(?:^|\s)חופשה(?:\s|$)/),
+      sick:leaveRow(lines,/(?:^|\s)מחלה(?:\s|$)/),
+      special:leaveRow(lines,/חופשה\s*מיוחדת/)
+    },
+    ni,health,grossBL,
+    niRate:Number.isFinite(ni)&&Number.isFinite(grossBL)&&grossBL>0?ni/grossBL*100:null,
+    healthRate:Number.isFinite(health)&&Number.isFinite(grossBL)&&grossBL>0?health/grossBL*100:null,
+    pension,
+    creditPoints:credits,
+    employmentFraction:fraction,
+    components:recurrentComponents(lines),
+    hasRetro:Boolean(summary&&Math.abs(summary.differences)>.5)||/פירוט\s*הפרשים/.test(clean)
+  };
+}
+function mad(values){
+  const xs=values.filter(Number.isFinite);if(xs.length<3)return null;
+  const m=median(xs);return median(xs.map(v=>Math.abs(v-m)));
+}
+function addGuardIssue(month,text){
+  S.issues.push({month,text});
+}
+function renderPayrollGuard(pays){
+  const el=$("payrollGuard");if(!el)return {alerts:0};
+  const docs=pays.filter(d=>d.month!=="לא זוהה"&&d.guard).sort((a,b)=>monthKey(a.month)-monthKey(b.month));
+  let alerts=0;
+  const sections=[];
+  const push=(title,items,info="")=>{
+    const badItems=items.filter(Boolean);
+    if(!badItems.length&&docs.length<3)return;
+    sections.push('<div class="guard-check"><b>'+esc(title)+'</b>'+
+      (info?'<div class="small">'+esc(info)+'</div>':'')+
+      (badItems.length?badItems.map(x=>'<div class="flag warn">'+esc(x)+'</div>').join(""):'<div class="flag ok">לא זוהתה חריגה בולטת.</div>')+
+      '</div>');
+  };
+
+  // 1. Recurring pay components.
+  {
+    const names=new Set();
+    docs.forEach(d=>Object.keys(d.guard.components||{}).forEach(k=>names.add(k)));
+    const issues=[];
+    for(const name of names){
+      const present=docs.filter(d=>d.guard.components?.[name]).length;
+      if(docs.length>=4&&present>=Math.max(3,Math.ceil(docs.length*.7))){
+        for(const d of docs){
+          if(!d.guard.components?.[name]){
+            issues.push(d.month+": הרכיב הקבוע „"+name+"” לא זוהה, למרות שהוא מופיע ברוב החודשים.");
+            addGuardIssue(d.month,"הרכיב הקבוע "+name+" לא זוהה בתלוש, למרות שהוא מופיע ברוב החודשים.");
+            alerts++;
+          }
+        }
+      }
+    }
+    push("1. רציפות רכיבי שכר",issues,"מחפש רכיב שמופיע בקביעות ואז נעלם.");
+  }
+
+  // 2. Vacation / sickness arithmetic and continuity.
+  {
+    const issues=[];
+    for(const d of docs){
+      for(const [key,label] of [["vacation","חופשה"],["sick","מחלה"],["special","חופשה מיוחדת"]]){
+        const x=d.guard.leave?.[key];
+        if(x&&x.mathError>.08){
+          issues.push(d.month+": יתרת "+label+" אינה נסגרת מתמטית.");
+          addGuardIssue(d.month,"יתרת "+label+" אינה נסגרת לפי יתרה קודמת + זיכוי - ניצול.");
+          alerts++;
+        }
+      }
+    }
+    for(let i=1;i<docs.length;i++){
+      const prev=docs[i-1],cur=docs[i];
+      if(shift(prev.month,1)!==cur.month)continue;
+      for(const [key,label] of [["vacation","חופשה"],["sick","מחלה"],["special","חופשה מיוחדת"]]){
+        const a=prev.guard.leave?.[key]?.newBalance,b=cur.guard.leave?.[key]?.previous;
+        if(Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)>.08){
+          issues.push(cur.month+": יתרת הפתיחה של "+label+" ("+fmt(b)+") אינה תואמת ליתרת הסגירה בחודש הקודם ("+fmt(a)+").");
+          addGuardIssue(cur.month,"יתרת הפתיחה של "+label+" אינה תואמת ליתרת הסגירה בחודש הקודם.");
+          alerts++;
+        }
+      }
+    }
+    push("2. חופשה ומחלה",issues,"בודק גם את החשבון בתוך התלוש וגם רצף יתרות מחודש לחודש.");
+  }
+
+  // 3. National insurance + health contribution consistency.
+  {
+    const issues=[];
+    for(const field of [["niRate","ביטוח לאומי"],["healthRate","ביטוח בריאות"]]){
+      const vals=docs.map(d=>d.guard[field[0]]).filter(Number.isFinite);
+      const base=median(vals);
+      if(vals.length>=4&&Number.isFinite(base)){
+        const threshold=Math.max(.6,Math.abs(base)*.25);
+        for(const d of docs){
+          const v=d.guard[field[0]];
+          if(Number.isFinite(v)&&Math.abs(v-base)>=threshold){
+            issues.push(d.month+": שיעור "+field[1]+" האפקטיבי "+fmt(v)+"% לעומת חציון "+fmt(base)+"%.");
+            addGuardIssue(d.month,"שיעור "+field[1]+" חריג ביחס לשאר החודשים.");
+            alerts++;
+          }
+        }
+      }
+    }
+    push("3. ביטוח לאומי ובריאות",issues,"השוואה רב־חודשית של הניכוי מול בסיס ביטוח לאומי שנקרא מהתלוש.");
+  }
+
+  // 4. Pension contribution rate/base consistency.
+  {
+    const issues=[];
+    const vals=docs.map(d=>d.guard.pension?.pct).filter(Number.isFinite);
+    const base=modeRounded(vals);
+    if(vals.length>=3&&Number.isFinite(base)){
+      for(const d of docs){
+        const p=d.guard.pension;
+        if(p&&Math.abs(p.pct-base)>.05){
+          issues.push(d.month+": שיעור ניכוי הפנסיה "+fmt(p.pct)+"% לעומת "+fmt(base)+"% ברוב החודשים.");
+          addGuardIssue(d.month,"שיעור ניכוי הפנסיה השתנה מ-"+fmt(base)+"% ל-"+fmt(p.pct)+"%.");
+          alerts++;
+        }
+      }
+    }
+    push("4. פנסיה",issues,"בודק את אחוז הניכוי ואת בסיס ההפרשה כאשר השורה נקראת בביטחון.");
+  }
+
+  // 5. Tax credit points.
+  {
+    const issues=[];
+    const vals=docs.map(d=>d.guard.creditPoints).filter(Number.isFinite);
+    const base=modeRounded(vals);
+    if(vals.length>=3&&Number.isFinite(base)){
+      for(const d of docs){
+        const v=d.guard.creditPoints;
+        if(Number.isFinite(v)&&Math.abs(v-base)>.01){
+          issues.push(d.month+": נקודות זיכוי "+fmt(v)+" לעומת "+fmt(base)+" ברוב החודשים.");
+          addGuardIssue(d.month,"מספר נקודות הזיכוי השתנה ל-"+fmt(v)+" לעומת "+fmt(base)+" ברוב החודשים.");
+          alerts++;
+        }
+      }
+    }
+    push("5. נקודות זיכוי במס",issues,"שינוי בנקודות זיכוי מסומן לבדיקה ואינו מוגדר אוטומטית כטעות.");
+  }
+
+  // 6. Gross -> net -> bank arithmetic.
+  {
+    const issues=[];
+    for(const d of docs){
+      const x=d.guard.summary;if(!x)continue;
+      const e1=Math.abs((x.totalPayments-x.mandatoryDeductions)-x.net);
+      const e2=Math.abs((x.net-x.officeDeductions-x.externalDeductions)-x.bank);
+      if(e1>1||e2>1){
+        issues.push(d.month+": שרשרת ברוטו→נטו→בנק אינה נסגרת (פער עד ₪"+fmt(Math.max(e1,e2))+").");
+        addGuardIssue(d.month,"חישוב ברוטו→נטו→סכום בבנק אינו נסגר לפי הסכומים שנקראו.");
+        alerts++;
+      }
+    }
+    push("6. ברוטו → נטו → בנק",issues,"בודק שסך התשלומים פחות ניכויי חובה שווה לנטו, ושהנטו פחות יתר הניכויים שווה לסכום בבנק.");
+  }
+
+  // 7. Retroactive payroll adjustments.
+  {
+    const issues=[];
+    for(const d of docs){
+      const diff=d.guard.summary?.differences;
+      if(Number.isFinite(diff)&&Math.abs(diff)>.5){
+        issues.push(d.month+": זוהו הפרשי שכר בסך ₪"+fmt(diff)+" — יש לבדוק אם הם סוגרים פער מחודש קודם.");
+      }else if(d.guard.hasRetro&&(!Number.isFinite(diff)||Math.abs(diff)<=.5)){
+        issues.push(d.month+": נמצא אזור „פירוט הפרשים”; המערכת תתייחס אליו כרמז לתיקון רטרואקטיבי.");
+      }
+    }
+    push("7. הפרשי שכר רטרואקטיביים",issues,"הפרשים אינם מסומנים כטעות; הם משמשים לקישור אפשרי לפער מחודש קודם.");
+  }
+
+  // 8. Multi-month robust anomaly detector.
+  {
+    const features=[
+      ["hourly","ערך שעה",d=>d.hourly,1],
+      ["gross","ברוטו שוטף",d=>d.guard.summary?.grossCurrent,300],
+      ["net","נטו",d=>d.guard.summary?.net,300],
+      ["bank","סכום בבנק",d=>d.guard.summary?.bank,300],
+      ["fraction","אחוז/חלקיות משרה",d=>d.guard.employmentFraction,.03]
+    ];
+    const issues=[];
+    if(docs.length>=5){
+      for(const [,label,getter,minAbs] of features){
+        const vals=docs.map(getter).filter(Number.isFinite);
+        if(vals.length<5)continue;
+        const med=median(vals),m=mad(vals);
+        const floor=Math.max(minAbs,Math.abs(med)*.08);
+        for(const d of docs){
+          const v=getter(d);if(!Number.isFinite(v))continue;
+          const dev=Math.abs(v-med);
+          const robust=m&&m>.0001?dev/(1.4826*m):0;
+          if(dev>=floor&&(robust>=3.5||dev>=Math.abs(med)*.25)){
+            issues.push(d.month+": "+label+" = "+fmt(v)+" לעומת חציון "+fmt(med)+".");
+            addGuardIssue(d.month,label+" חריג ביחס לדפוס הרב־חודשי.");
+            alerts++;
+          }
+        }
+      }
+    }
+    push("8. אנומליות רב־חודשיות",issues,"חיישן סטטיסטי שמחפש חודש חריג גם אם עדיין אין כלל חשבונאי ספציפי.");
+  }
+
+  el.innerHTML='<article class="month"><div class="month-head"><div><div class="month-name">Payroll Guard — 8 בדיקות</div><div class="small">נבדקו '+docs.length+' תלושי שכר שנקראו וזוהו לפי חודש.</div></div><span class="badge '+(alerts?"warn":"ok")+'">'+(alerts?alerts+" התראות לבדיקה":"ללא חריגה בולטת")+'</span></div>'+
+    '<div class="guard-grid">'+sections.join("")+'</div></article>';
+  return {alerts};
+}
+
 function parse(kind,text,file){
   const clean=String(text||"").replace(/[\u200e\u200f]/g," ");
   const lines=clean.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
-  const d={kind,fileName:file.name,month:month(clean),hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null};
+  const d={kind,fileName:file.name,month:month(clean),hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null,guard:null};
   if(kind==="payslip"){
     const explicitRate=hourly(lines);
     const inferredRates=[];
@@ -387,6 +706,7 @@ function parse(kind,text,file){
     d.marginalTax=taxMarginalRate(lines);
     d.taxGrossYtd=taxLabeledAmount(lines,/ברוטו\s*למס\s*הכנסה/,{min:100,max:5000000,pick:"max"});
     d.incomeTaxYtd=taxLabeledAmount(lines,/מס\s*הכנסה\s*שנתי\s*לגביה/,{min:0,max:2000000,pick:"max"});
+    d.guard=extractPayrollGuard(clean,lines);
   }else{
     function attendanceMetric(pct){
       let v=fallbackNear(clean,new RegExp("(?:\\b"+pct+"\\s*%|שעות\\s*נוספות\\s*"+pct+")[^0-9\\n]{0,60}(\\d{1,3}(?::\\d{2}|[.,]\\d+)?)","i"));
@@ -582,6 +902,8 @@ function render(){
       '<div class="flags">'+flags.map(([c,t])=>'<div class="flag '+c+'">'+esc(t)+'</div>').join("")+'</div></article>';
   }).join("");
 
+  const guardAudit=renderPayrollGuard(pays);
+  if(guardAudit.alerts)warn+=guardAudit.alerts;
   const taxAudit=renderTaxAnalysis(pays);
   if(taxAudit.alerts)warn+=taxAudit.alerts;
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n");
