@@ -99,22 +99,72 @@ async function pdfText(file,base,span){
   }
   return out.join("\n");
 }
+function canvasBlob(canvas,type="image/jpeg",quality=.95){
+  return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("CANVAS_BLOB_FAILED")),type,quality));
+}
+function preparedCanvas(bmp,scale=1){
+  const canvas=document.createElement("canvas");
+  canvas.width=Math.max(1,Math.round(bmp.width*scale));
+  canvas.height=Math.max(1,Math.round(bmp.height*scale));
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});
+  ctx.fillStyle="#fff";ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality="high";
+  ctx.filter="grayscale(1) contrast(1.65)";
+  ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
+  return canvas;
+}
+function cropCanvas(source,y0,y1){
+  const h=Math.max(1,y1-y0);
+  const canvas=document.createElement("canvas");
+  canvas.width=source.width;canvas.height=h;
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});
+  ctx.fillStyle="#fff";ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(source,0,y0,source.width,h,0,0,source.width,h);
+  return canvas;
+}
 async function imageText(file,base,span){
   try{
     const bmp=await createImageBitmap(file);
-    const maxDim=3600;
-    const scale=Math.max(1,Math.min(2.4,maxDim/Math.max(bmp.width,bmp.height)));
-    const canvas=document.createElement("canvas");
-    canvas.width=Math.max(1,Math.round(bmp.width*scale));
-    canvas.height=Math.max(1,Math.round(bmp.height*scale));
-    const ctx=canvas.getContext("2d",{willReadFrequently:true});
-    ctx.fillStyle="#fff";ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.filter="grayscale(1) contrast(1.45)";
-    ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
-    const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("IMAGE_PREPROCESS_FAILED")),"image/jpeg",0.94));
-    return ocrBlob(blob,file.name,base,span);
+    const longSide=Math.max(bmp.width,bmp.height);
+    const scale=Math.max(1,Math.min(3.2,4600/longSide));
+    const source=preparedCanvas(bmp,scale);
+    const texts=[];
+
+    // First pass: full page. Good for month/header and document classification.
+    const fullMax=3000;
+    let fullCanvas=source;
+    if(Math.max(source.width,source.height)>fullMax){
+      const fullScale=fullMax/Math.max(source.width,source.height);
+      const small=document.createElement("canvas");
+      small.width=Math.max(1,Math.round(source.width*fullScale));
+      small.height=Math.max(1,Math.round(source.height*fullScale));
+      const c=small.getContext("2d",{willReadFrequently:true});
+      c.drawImage(source,0,0,small.width,small.height);
+      fullCanvas=small;
+    }
+    prog("OCR כללי: "+file.name,base);
+    texts.push(await ocrBlob(await canvasBlob(fullCanvas),file.name+" — עמוד מלא",base,span*.24));
+
+    // Second pass: overlapping horizontal tiles. This is the key path for screenshots:
+    // small payroll/attendance tables become large enough for OCR to read numbers reliably.
+    const aspect=source.height/Math.max(1,source.width);
+    const tiles=aspect>2.6?5:aspect>1.65?4:3;
+    const overlap=.14;
+    const step=source.height/tiles;
+    for(let i=0;i<tiles;i++){
+      const y0=Math.max(0,Math.floor(i*step-step*overlap));
+      const y1=Math.min(source.height,Math.ceil((i+1)*step+step*overlap));
+      const tile=cropCanvas(source,y0,y1);
+      const pBase=base+span*(.24+.76*(i/tiles));
+      const pSpan=span*(.76/tiles);
+      prog("OCR אזור "+(i+1)+"/"+tiles+": "+file.name,pBase);
+      texts.push(await ocrBlob(await canvasBlob(tile),file.name+" — אזור "+(i+1),pBase,pSpan));
+    }
+
+    return texts.filter(Boolean).join("\n--- OCR REGION ---\n");
   }catch(e){
-    console.warn("image preprocess fallback",e);
+    console.warn("screenshot OCR fallback",e);
     return ocrBlob(file,file.name,base,span);
   }
 }
@@ -135,14 +185,10 @@ function hourly(lines){
   }
   return median(vals);
 }
-function metricFromRow(lines,code,rate,factor){
-  const row=lines.find(l=>new RegExp("\\b"+code+"\\b").test(l));
-  if(!row)return null;
-  const xs=[...new Set(lineNums(row).filter(v=>v!==Number(code)&&v>0&&v<100000).map(v=>Math.round(v*10000)/10000))];
+function metricFromNums(values,rate,factor,exclude=[]){
+  const banned=new Set(exclude.map(Number));
+  const xs=[...new Set(values.filter(v=>Number.isFinite(v)&&v>0&&v<100000&&!banned.has(Number(v))).map(v=>Math.round(v*10000)/10000))];
   if(!xs.length)return null;
-
-  // Reconstruct amount = quantity × tariff directly from the row.
-  // This lets us infer the base hourly rate even before it is known.
   let best=null;
   for(const q of xs){
     if(q<=0||q>350)continue;
@@ -155,7 +201,7 @@ function metricFromRow(lines,code,rate,factor){
         if(amount<=0||amount===q||amount===tariff)continue;
         const err=Math.abs(amount-product)/Math.max(1,amount);
         if(err>.025)continue;
-        const ratePenalty=rate?Math.abs(base-rate)/Math.max(1,rate)*.05:0;
+        const ratePenalty=rate?Math.abs(base-rate)/Math.max(1,rate)*.08:0;
         const score=err+ratePenalty;
         if(!best||score<best.score)best={q,tariff,amount,base,score};
       }
@@ -163,7 +209,6 @@ function metricFromRow(lines,code,rate,factor){
   }
   if(best)return {q:best.q,tariff:best.tariff,amount:best.amount,base:best.base};
 
-  // Fallback for unusual layouts when a regular hourly rate is already known.
   const target=rate?rate*factor:null;
   if(target){
     const tariff=xs.filter(v=>v>=5&&v<=500).sort((a,b)=>Math.abs(a-target)-Math.abs(b-target))[0];
@@ -173,6 +218,27 @@ function metricFromRow(lines,code,rate,factor){
         const q=amount/tariff,shown=xs.find(v=>Math.abs(v-q)<=Math.max(.08,q*.02));
         if(q>0&&q<350&&shown!=null)return {q:shown,tariff,amount,base:tariff/factor};
       }
+    }
+  }
+  return null;
+}
+function metricFromRow(lines,code,rate,factor,labelNumber=null){
+  const idx=lines.findIndex(l=>new RegExp("\\b"+code+"\\b").test(l));
+  if(idx>=0){
+    const values=lineNums(lines[idx]);
+    const hit=metricFromNums(values,rate,factor,[Number(code),labelNumber]);
+    if(hit)return hit;
+  }
+
+  // Screenshot/OCR fallback: codes are often missed while "125 / 150 / 175 / 200"
+  // remains readable. Inspect a small neighborhood around the percentage label.
+  if(labelNumber!=null){
+    const re=new RegExp("(^|[^0-9])"+labelNumber+"\\s*%?([^0-9]|$)");
+    for(let i=0;i<lines.length;i++){
+      if(!re.test(lines[i]))continue;
+      const block=lines.slice(Math.max(0,i-2),Math.min(lines.length,i+3)).join(" ");
+      const hit=metricFromNums(lineNums(block),rate,factor,[Number(code),labelNumber]);
+      if(hit)return hit;
     }
   }
   return null;
@@ -195,13 +261,18 @@ function parse(kind,text,file){
     const inferredRates=[];
     d.hourlySource=null;
     for(const o of OT){
-      const m=metricFromRow(lines,o.code,explicitRate,o.f);
+      const pct=Number(o.label.replace(/\D/g,""))||null;
+      const m=metricFromRow(lines,o.code,explicitRate,o.f,pct);
       if(m){
         d[o.k]=m.q;d.tariffs[o.k]=m.tariff;
         if(Number.isFinite(m.base))inferredRates.push(m.base);
       }
     }
-    const on=metricFromRow(lines,"4392",explicitRate,1);
+    let on=metricFromRow(lines,"4392",explicitRate,1,null);
+    if(!on){
+      const oi=lines.findIndex(l=>/כוננ/.test(l));
+      if(oi>=0)on=metricFromNums(lineNums(lines.slice(Math.max(0,oi-2),Math.min(lines.length,oi+3)).join(" ")),explicitRate,1,[4392]);
+    }
     if(on){
       d.oncall=on.q;d.tariffs.oncall=on.tariff;
       if(Number.isFinite(on.base))inferredRates.push(on.base);
@@ -209,11 +280,28 @@ function parse(kind,text,file){
     d.hourly=Number.isFinite(explicitRate)?explicitRate:median(inferredRates);
     d.hourlySource=Number.isFinite(explicitRate)?"ע.שעה / ערך שעה בתלוש":(Number.isFinite(d.hourly)?"נגזר מתעריפי עבודה נוספת":null);
   }else{
-    d.ot125=fallbackNear(clean,/(?:125\s*%|שעות\s*נוספות\s*125)[^0-9\n]{0,45}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
-    d.ot150=fallbackNear(clean,/(?:150\s*%|שעות\s*נוספות\s*150)[^0-9\n]{0,45}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
-    d.ot175=fallbackNear(clean,/(?:175\s*%|שעות\s*נוספות\s*175)[^0-9\n]{0,45}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
-    d.ot200=fallbackNear(clean,/(?:200\s*%|שעות\s*נוספות\s*200)[^0-9\n]{0,45}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
-    d.oncall=fallbackNear(clean,/(?:כוננות\s*חול|כוננות|כוננויות)[^0-9\n]{0,45}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
+    function attendanceMetric(pct){
+      let v=fallbackNear(clean,new RegExp("(?:\\b"+pct+"\\s*%|שעות\\s*נוספות\\s*"+pct+")[^0-9\\n]{0,60}(\\d{1,3}(?::\\d{2}|[.,]\\d+)?)","i"));
+      if(Number.isFinite(v))return v;
+      const re=new RegExp("(^|[^0-9])"+pct+"\\s*%?([^0-9]|$)");
+      for(let i=0;i<lines.length;i++){
+        if(!re.test(lines[i]))continue;
+        const neighborhood=lines.slice(i,Math.min(lines.length,i+3));
+        for(const ln of neighborhood){
+          const raw=(ln.match(/\d{1,3}(?::\d{2}|[.,]\d{1,2})/g)||[]);
+          for(const token of raw){
+            const n=toHours(token);
+            if(Number.isFinite(n)&&n>=0&&n<150&&Math.abs(n-pct)>2)return n;
+          }
+        }
+      }
+      return null;
+    }
+    d.ot125=attendanceMetric(125);
+    d.ot150=attendanceMetric(150);
+    d.ot175=attendanceMetric(175);
+    d.ot200=attendanceMetric(200);
+    d.oncall=fallbackNear(clean,/(?:כוננות\s*חול|כוננות|כוננויות)[^0-9\n]{0,60}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
   }
   const vs=OT.map(o=>d[o.k]).filter(Number.isFinite);
   d.otTotal=vs.length?vs.reduce((a,b)=>a+b,0):null;
