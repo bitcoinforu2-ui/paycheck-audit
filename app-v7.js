@@ -52,18 +52,54 @@ function pdfRows(items){
     return a+" || "+b;
   });
 }
+async function ocrBlob(blob,label,base,span){
+  const r=await Tesseract.recognize(blob,"heb+eng",{logger:m=>{
+    if(m.status==="recognizing text")prog("OCR: "+label,base+span*(m.progress||0));
+  }});
+  return r.data.text||"";
+}
+async function ocrPdfPage(pg,fileName,pageNo,base,span){
+  const viewport=pg.getViewport({scale:1.7});
+  const canvas=document.createElement("canvas");
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});
+  canvas.width=Math.ceil(viewport.width);
+  canvas.height=Math.ceil(viewport.height);
+  await pg.render({canvasContext:ctx,viewport}).promise;
+  const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("canvas-to-blob-failed")),"image/jpeg",0.92));
+  return ocrBlob(blob,fileName+" — עמוד "+pageNo,base,span);
+}
 async function pdfText(file,base,span){
-  const p=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise,out=[];
+  let p;
+  try{
+    p=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise;
+  }catch(err){
+    const e=new Error("PDF_OPEN_FAILED");
+    e.cause=err;
+    throw e;
+  }
+  const out=[];
   for(let i=1;i<=p.numPages;i++){
-    prog("קורא PDF: "+file.name+" — "+i+"/"+p.numPages,base+span*((i-1)/p.numPages));
-    const pg=await p.getPage(i),tc=await pg.getTextContent();
-    out.push(pdfRows(tc.items).join("\n"));
+    const pageBase=base+span*((i-1)/p.numPages);
+    const pageSpan=span/p.numPages;
+    prog("קורא PDF: "+file.name+" — "+i+"/"+p.numPages,pageBase);
+    const pg=await p.getPage(i);
+    let txt="";
+    try{
+      const tc=await pg.getTextContent();
+      txt=pdfRows(tc.items).join("\n");
+    }catch{}
+    // Image-only/scanned PDFs often return almost no usable text.
+    // OCR only those pages instead of failing the whole document.
+    const compact=txt.replace(/\s+/g,"").length;
+    if(compact<40){
+      txt=await ocrPdfPage(pg,file.name,i,pageBase,pageSpan);
+    }
+    out.push(txt);
   }
   return out.join("\n");
 }
 async function imageText(file,base,span){
-  const r=await Tesseract.recognize(file,"heb+eng",{logger:m=>{if(m.status==="recognizing text")prog("OCR: "+file.name,base+span*(m.progress||0))}});
-  return r.data.text||"";
+  return ocrBlob(file,file.name,base,span);
 }
 function prog(t,p){
   $("progressWrap").classList.remove("hidden");$("progressText").textContent=t;
@@ -319,13 +355,30 @@ $("analyzeBtn").onclick=async()=>{
   if(!S.pay.length||!S.att.length){alert("צריך לפחות תלוש אחד ודוח נוכחות אחד.");return}
   $("analyzeBtn").disabled=true;S.docs=[];$("requestSection").classList.add("hidden");
   const jobs=[...S.pay.map(file=>({file,kind:"payslip"})),...S.att.map(file=>({file,kind:"attendance"}))];
+  const failed=[];
   try{
     for(let i=0;i<jobs.length;i++){
       const j=jobs[i],base=i/jobs.length,span=.94/jobs.length,isPdf=j.file.type==="application/pdf"||j.file.name.toLowerCase().endsWith(".pdf");
-      const text=isPdf?await pdfText(j.file,base,span):await imageText(j.file,base,span);
-      S.docs.push(parse(j.kind,text,j.file));
+      try{
+        const text=isPdf?await pdfText(j.file,base,span):await imageText(j.file,base,span);
+        if(!String(text||"").trim())throw new Error("EMPTY_TEXT");
+        S.docs.push(parse(j.kind,text,j.file));
+      }catch(e){
+        console.error("Failed file:",j.file.name,e);
+        failed.push({name:j.file.name,reason:e?.message||"read-failed"});
+        // Continue with the rest of the batch instead of aborting everything.
+      }
     }
-    prog("הניתוח הסתיים",1);render();$("autoProfileSection").scrollIntoView({behavior:"smooth"});
-  }catch(e){console.error(e);alert("הייתה שגיאה בקריאת אחד הקבצים. נסה PDF מקורי או צילום חד יותר.")}
-  finally{$("analyzeBtn").disabled=false}
+    if(S.docs.length){
+      prog("הניתוח הסתיים",1);
+      render();
+      $("autoProfileSection").scrollIntoView({behavior:"smooth"});
+    }
+    if(failed.length){
+      const names=failed.map(x=>"• "+x.name).join("\n");
+      alert("הבדיקה המשיכה, אבל לא הצלחתי לקרוא "+failed.length+" קובץ/ים:\n"+names+"\n\nאפשר להסיר אותם מהרשימה ולנסות שוב, או להעלות PDF מקורי/צילום חד.");
+    }else if(!S.docs.length){
+      alert("לא הצלחתי לקרוא אף אחד מהקבצים שנבחרו. נסה PDF מקורי או צילום חד יותר.");
+    }
+  }finally{$("analyzeBtn").disabled=false}
 };
