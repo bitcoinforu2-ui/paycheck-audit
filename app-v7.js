@@ -131,22 +131,48 @@ function parse(kind,text,file){
 }
 function pairs(){
   const a=S.docs.filter(d=>d.kind==="attendance"),p=S.docs.filter(d=>d.kind==="payslip");
-  if(a.length===1&&p.length===1)return [{a:a[0],p:p[0],fallback:a[0].month==="לא זוהה"||p[0].month==="לא זוהה",lag:p[0].month===shift(a[0].month,1)}];
+
+  // Payroll pattern validated on the supplied municipal samples:
+  // work/attendance month M is normally paid in payslip M+1.
+  // Do NOT apply an assumed 24/25 cutoff; compare the full attendance month.
+  if(a.length===1&&p.length===1){
+    const lag=a[0].month!=="לא זוהה"&&p[0].month===shift(a[0].month,1);
+    const same=a[0].month!=="לא זוהה"&&p[0].month===a[0].month;
+    const fallback=a[0].month==="לא זוהה"||p[0].month==="לא זוהה"||(!lag&&!same);
+    return [{a:a[0],p:p[0],fallback,lag,same}];
+  }
+
   const out=[],used=new Set();
   a.forEach((ad,ai)=>{
     let best=null,score=-1;
     p.forEach((pd,pi)=>{
-      if(used.has(pi))return;let s=0;
-      if(ad.month!=="לא זוהה"&&pd.month===ad.month)s=100;
-      else if(ad.month!=="לא זוהה"&&pd.month===shift(ad.month,1))s=70;
-      if(s>score){score=s;best={pd,pi}}
+      if(used.has(pi))return;
+      let scoreHere=0;
+      if(ad.month!=="לא זוהה"&&pd.month===shift(ad.month,1))scoreHere=140;
+      else if(ad.month!=="לא זוהה"&&pd.month===ad.month)scoreHere=80;
+      if(scoreHere>score){score=scoreHere;best={pd,pi}}
     });
-    if(best&&score>0){used.add(best.pi);out.push({a:ad,p:best.pd,fallback:false,lag:best.pd.month===shift(ad.month,1)})}
-    else out.push({a:ad,p:null,fallback:false,lag:false});
+    if(best&&score>0){
+      used.add(best.pi);
+      out.push({
+        a:ad,p:best.pd,
+        fallback:false,
+        lag:best.pd.month===shift(ad.month,1),
+        same:best.pd.month===ad.month
+      });
+    }else out.push({a:ad,p:null,fallback:false,lag:false,same:false});
   });
-  p.forEach((pd,pi)=>{if(!used.has(pi))out.push({a:null,p:pd,fallback:false,lag:false})});
+
+  p.forEach((pd,pi)=>{if(!used.has(pi))out.push({a:null,p:pd,fallback:false,lag:false,same:false})});
+
+  // If OCR missed month labels but counts match, pair by upload order and mark it clearly.
   if(out.some(x=>!x.a||!x.p)&&a.length===p.length){
-    return a.map((ad,i)=>({a:ad,p:p[i],fallback:true,lag:false}));
+    const anyUnknown=a.some(x=>x.month==="לא זוהה")||p.some(x=>x.month==="לא זוהה");
+    if(anyUnknown)return a.map((ad,i)=>({
+      a:ad,p:p[i],fallback:true,
+      lag:ad.month!=="לא זוהה"&&p[i].month===shift(ad.month,1),
+      same:ad.month!=="לא זוהה"&&p[i].month===ad.month
+    }));
   }
   return out;
 }
@@ -158,8 +184,15 @@ function rows(d){
 }
 function details(a,p){
   const out=[];
-  for(const o of OT)if(Number.isFinite(a?.[o.k])&&Number.isFinite(p?.[o.k])){
-    const g=a[o.k]-p[o.k];if(Math.abs(g)>.25)out.push({k:o.k,label:o.label,g});
+  for(const o of OT){
+    const av=a?.[o.k],pv=p?.[o.k];
+    if(Number.isFinite(av)&&Number.isFinite(pv)){
+      const g=av-pv;
+      if(Math.abs(g)>.25)out.push({k:o.k,label:o.label,g,type:g>0?"under":"over"});
+    }else if(Number.isFinite(av)&&av>.25&&!Number.isFinite(pv)){
+      // Attendance shows payable overtime but the matching payslip category is absent.
+      out.push({k:o.k,label:o.label,g:av,type:"missing"});
+    }
   }
   return out;
 }
@@ -182,19 +215,31 @@ function render(){
   ].map(([k,v])=>'<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
   $("autoProfileSection").classList.remove("hidden");
 
-  $("monthResults").innerHTML=ps.map(({a,p,fallback,lag})=>{
+  $("monthResults").innerHTML=ps.map(({a,p,fallback,lag,same})=>{
     const m=a?.month!=="לא זוהה"?a?.month:p?.month||"לא זוהה",flags=[];
     let cls="warn",title="דורש בדיקה",gap=null;
     if(!a){warn++;title="חסר דוח נוכחות";flags.push(["warn","לא נמצא דוח נוכחות מתאים לתלוש."])}
     else if(!p){warn++;title="חסר תלוש";flags.push(["warn","לא נמצא תלוש מתאים לדוח הנוכחות."])}
     else{
       if(fallback)flags.push(["info","המסמכים הותאמו לפי סדר ההעלאה כי החודש לא זוהה בוודאות באחד מהם."]);
-      if(lag)flags.push(["info","התלוש הותאם לדוח הנוכחות של החודש הקודם. בבדיקת הדוגמאות שסופקו רכיבי העבודה הנוספת בתלוש משקפים את חודש הנוכחות הקודם."]);
+      if(lag)flags.push(["info","שיוך חודש: דוח הנוכחות של חודש העבודה הותאם לתלוש של החודש הבא (M→M+1), בהתאם לדפוס שאומת בתלושים שנבדקו. ההשוואה כוללת את כל חודש הנוכחות — ללא חיתוך אוטומטי ב־24/25."]);
+      if(same)flags.push(["warn","נמצא תלוש מאותו חודש, אך בדוגמאות שאומתו דוח חודש העבודה משולם בדרך כלל בתלוש של החודש הבא. מומלץ לצרף גם את תלוש M+1."]);
       const ds=details(a,p);gap=Number.isFinite(a.otTotal)&&Number.isFinite(p.otTotal)?a.otTotal-p.otTotal:null;
       if(!ds.length&&gap!=null){good++;cls="ok";title="התאמה טובה";flags.push(["ok","רכיבי השעות שנקראו תואמים בקירוב."])}
       else if(ds.length){
         const big=ds.some(x=>Math.abs(x.g)>1);cls=big?"bad":"warn";title=big?"פער משמעותי לבדיקה":"פער קטן לבדיקה";big?bad++:warn++;
-        ds.forEach(x=>{flags.push([Math.abs(x.g)>1?"bad":"warn",x.label+": פער של "+hh(x.g)+" שעות."]);if(x.g>0)S.issues.push({month:m,text:x.label+": בדוח נקראו "+fmt(a[x.k])+" ובתלוש "+fmt(p[x.k])+" שעות."})});
+        ds.forEach(x=>{
+          const level=(x.type==="missing"||Math.abs(x.g)>1)?"bad":"warn";
+          const msg=x.type==="missing"
+            ?x.label+": קיימות בדוח "+hh(x.g)+" שעות, אך לא זוהה רכיב מקביל בתלוש."
+            :x.label+": פער של "+hh(x.g)+" שעות "+(x.g>0?"לטובת דוח הנוכחות":"לטובת התלוש")+".";
+          flags.push([level,msg]);
+          if(x.type==="missing"||x.g>0){
+            S.issues.push({month:m,text:x.type==="missing"
+              ?x.label+": בדוח הנוכחות קיימות "+hh(x.g)+" שעות, אך לא זוהה תשלום מקביל בתלוש."
+              :x.label+": בדוח נקראו "+fmt(a[x.k])+" שעות ובתלוש "+fmt(p[x.k])+" שעות; חסרות לכאורה "+hh(x.g)+" שעות לבדיקה."});
+          }
+        });
       }else{warn++;flags.push(["warn","לא נקראו מספיק רכיבי שעות משני המסמכים."])}
       if(Number.isFinite(p.oncall))flags.push(["info","כוננות חול בתלוש: "+fmt(p.oncall)+" שעות/כמות לחישוב שכר. זה אינו מספר הכוננויות."]);
       const est=estimate(a,p);if(est)flags.push(["info","אומדן כספי גולמי לפי התעריפים שנקראו: כ־₪"+fmt(est)+"."]);
