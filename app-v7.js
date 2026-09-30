@@ -243,6 +243,14 @@ function metricFromRow(lines,code,rate,factor,labelNumber=null){
   }
   return null;
 }
+function toHours(raw){
+  const v=String(raw??'').trim().replace(',','.');
+  const colon=v.match(/^(\d{1,3}):(\d{2})$/);
+  if(colon&&Number(colon[2])<=59)return Number(colon[1])+Number(colon[2])/60;
+  const dot=v.match(/^(\d{1,3})\.(\d{2})$/);
+  if(dot&&Number(dot[2])<=59)return Number(dot[1])+Number(dot[2])/60;
+  const n=Number(v);return Number.isFinite(n)?n:null;
+}
 function fallbackNear(t,re){
   const m=t.match(re); if(!m)return null;
   const s=String(m[1]).replace(",",".");
