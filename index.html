@@ -11,69 +11,29 @@
 <body>
 <header class="top">
   <div>
-    <div class="eyebrow">PAYCHECK AUDIT • V5 SELF-SERVICE</div>
+    <div class="eyebrow">PAYCHECK AUDIT • V6 AUTO PROFILE</div>
     <h1>בדיקת התלוש שלי</h1>
-    <p>מעלים תלוש ודוח נוכחות, מזינים תנאי עבודה בסיסיים ומקבלים פערים אפשריים ופנייה מוכנה לבדיקה מול מחלקת השכר.</p>
+    <p>מעלים תלוש שכר ודוח נוכחות. האפליקציה קוראת את נתוני השכר מתוך התלוש, משווה לנוכחות ומכינה פנייה מסודרת במקרה של פער.</p>
   </div>
   <span class="privacy">🔒 עיבוד מקומי</span>
 </header>
 
 <main>
   <section class="card intro">
-    <h2>בדיקה אישית ב־4 צעדים</h2>
-    <div class="steps steps-4">
-      <div><b>1</b><span>מגדירים תנאים בסיסיים</span></div>
-      <div><b>2</b><span>מעלים תלוש שכר</span></div>
-      <div><b>3</b><span>מעלים דוח נוכחות</span></div>
-      <div><b>4</b><span>מקבלים פערים ופנייה מוכנה</span></div>
+    <h2>בדיקה אישית ב־3 צעדים</h2>
+    <div class="steps steps-3">
+      <div><b>1</b><span>מעלים תלוש/ים</span></div>
+      <div><b>2</b><span>מעלים דוח/ות נוכחות</span></div>
+      <div><b>3</b><span>מקבלים פערים ופנייה מוכנה</span></div>
     </div>
-  </section>
-
-  <section class="card profile-card">
-    <div class="section-head">
-      <div>
-        <div class="eyebrow dark">EMPLOYMENT PROFILE</div>
-        <h2>התנאים שלי</h2>
-        <p class="small">רק מה שידוע לך. שדות ריקים לא ישמשו לקביעה.</p>
-      </div>
-      <span class="local-pill">נשמר רק במכשיר</span>
-    </div>
-    <div class="profile-grid">
-      <label>סוג שכר
-        <select id="salaryType">
-          <option value="unknown">לא יודע / לא רלוונטי</option>
-          <option value="hourly">שעתי</option>
-          <option value="monthly">חודשי</option>
-        </select>
-      </label>
-      <label>שכר שעה בסיסי (₪)
-        <input id="hourlyRate" inputmode="decimal" placeholder="לדוגמה 49.24">
-      </label>
-      <label>שעות שבועיות לפי ההסכם
-        <input id="weeklyHours" inputmode="decimal" placeholder="לדוגמה 40">
-      </label>
-      <label>כוננויות / יחידות צפויות בחודש
-        <input id="expectedOncall" inputmode="decimal" placeholder="אופציונלי">
-      </label>
-      <label>תעריף ליחידת כוננות (₪)
-        <input id="oncallRate" inputmode="decimal" placeholder="אופציונלי">
-      </label>
-      <label class="profile-notes">תנאי מיוחד שחשוב לבדיקה
-        <textarea id="profileNotes" rows="2" placeholder="למשל: תשלום שעות נוספות בחודש העוקב"></textarea>
-      </label>
-    </div>
-    <div class="profile-actions">
-      <label class="remember"><input id="rememberProfile" type="checkbox" checked> זכור את התנאים במכשיר הזה</label>
-      <button id="saveProfileBtn" class="secondary">שמור תנאים</button>
-      <button id="clearDataBtn" class="ghost">מחק נתונים מקומיים</button>
-    </div>
+    <p class="small">אין צורך להזין תנאי העסקה ידנית. המנוע מנסה לזהות אותם מתוך התלושים. העלאת כמה חודשים משפרת את יכולת הזיהוי של רכיבים חוזרים.</p>
   </section>
 
   <section class="upload-grid">
     <article class="card">
       <div class="type-tag">תלושי שכר</div>
       <h2>📄 שכר</h2>
-      <p>PDF או צילום. אפשר כמה חודשים יחד.</p>
+      <p>PDF או צילום. אפשר להעלות כמה חודשים יחד.</p>
       <label class="drop">
         <input id="payFiles" type="file" accept="application/pdf,image/*" multiple>
         <strong>הוסף תלושים</strong>
@@ -85,7 +45,7 @@
     <article class="card">
       <div class="type-tag">כניסה / יציאה</div>
       <h2>🕒 נוכחות</h2>
-      <p>PDF או צילום. אפשר כמה חודשים יחד.</p>
+      <p>PDF או צילום. אפשר להעלות כמה חודשים יחד.</p>
       <label class="drop">
         <input id="attFiles" type="file" accept="application/pdf,image/*" multiple>
         <strong>הוסף דוחות נוכחות</strong>
@@ -96,11 +56,23 @@
   </section>
 
   <section class="card">
-    <button id="analyzeBtn" class="primary">בדוק פערים</button>
+    <button id="analyzeBtn" class="primary">בדוק את השכר שלי</button>
     <div id="progressWrap" class="hidden">
       <div class="progress-title"><span id="progressText">מתחיל…</span><span id="progressPct">0%</span></div>
       <div class="progress"><div id="progressBar"></div></div>
     </div>
+  </section>
+
+  <section id="autoProfileSection" class="card hidden">
+    <div class="section-head">
+      <div>
+        <div class="eyebrow dark">AUTO DETECTED</div>
+        <h2>נתוני שכר שזוהו מהתלוש</h2>
+        <p class="small">הנתונים מוצגים לצורך שקיפות. הם נקראים מהתלושים שהועלו ולא נשמרים במאגר עובדים.</p>
+      </div>
+      <span class="local-pill">מהתלוש בלבד</span>
+    </div>
+    <div id="autoProfile" class="metrics profile-metrics"></div>
   </section>
 
   <section id="resultsSection" class="hidden">
@@ -129,8 +101,8 @@
 
   <section id="reviewSection" class="card hidden">
     <details>
-      <summary><b>בדיקת נתונים ידנית</b> — אם מסמך לא נקרא טוב</summary>
-      <p class="small">אפשר לתקן את הערכים שהמערכת חילצה ולחשב מחדש. זה חשוב במיוחד בצילומים מטושטשים או פורמט לא מוכר.</p>
+      <summary><b>בדיקת נתונים ידנית</b> — רק אם מסמך לא נקרא טוב</summary>
+      <p class="small">אין צורך להזין תנאי עבודה. כאן אפשר רק לתקן נתון שה־OCR קרא לא נכון.</p>
       <div id="reviewRows"></div>
       <button id="recalcBtn" class="secondary wide">חשב מחדש</button>
     </details>
@@ -138,7 +110,7 @@
 
   <section class="card disclaimer">
     <b>חשוב:</b>
-    <span>התוצאה היא כלי עזר לאיתור פערים אפשריים, לא קביעה משפטית או חשבונאית. לפני שליחת פנייה יש לוודא שהנתונים שחולצו נכונים. הסכמים קיבוציים, מועדי חיתוך שכר, תשלום בחודש עוקב, חופשה, מחלה והסדרים מיוחדים יכולים להסביר פערים.</span>
+    <span>התוצאה היא כלי עזר לאיתור פערים אפשריים, לא קביעה משפטית או חשבונאית. מועדי חיתוך שכר, תשלום בחודש עוקב, חופשה, מחלה והסדרים מיוחדים יכולים להסביר פערים.</span>
   </section>
 </main>
 <script type="module" src="app.js"></script>
