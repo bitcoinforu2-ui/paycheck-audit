@@ -187,7 +187,7 @@ function render(){
     else if(!p){warn++;title="חסר תלוש";flags.push(["warn","לא נמצא תלוש מתאים לדוח הנוכחות."])}
     else{
       if(fallback)flags.push(["info","המסמכים הותאמו לפי סדר ההעלאה כי החודש לא זוהה בוודאות באחד מהם."]);
-      if(lag)flags.push(["info","זוהה שהתלוש עשוי לכלול דיווחים מהחודש הקודם."]);
+      if(lag)flags.push(["info","התלוש הותאם לדוח הנוכחות של החודש הקודם. בבדיקת הדוגמאות שסופקו רכיבי העבודה הנוספת בתלוש משקפים את חודש הנוכחות הקודם."]);
       const ds=details(a,p);gap=Number.isFinite(a.otTotal)&&Number.isFinite(p.otTotal)?a.otTotal-p.otTotal:null;
       if(!ds.length&&gap!=null){good++;cls="ok";title="התאמה טובה";flags.push(["ok","רכיבי השעות שנקראו תואמים בקירוב."])}
       else if(ds.length){
