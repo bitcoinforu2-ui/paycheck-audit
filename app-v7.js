@@ -299,17 +299,28 @@ function taxMonthSeries(pays){
   const known=pays.filter(d=>d.month!=="לא זוהה").sort((a,b)=>monthKey(a.month)-monthKey(b.month));
   const byMonth=new Map(known.map(d=>[d.month,d]));
   return known.map(d=>{
-    let taxable=null,tax=null,exact=false;
+    let taxable=null,tax=null,effective=null,exact=false,reason=null;
     const [mm]=d.month.split("/").map(Number);
     const prev=byMonth.get(shift(d.month,-1));
     if(mm===1&&Number.isFinite(d.taxGrossYtd)&&Number.isFinite(d.incomeTaxYtd)){
-      taxable=d.taxGrossYtd;tax=d.incomeTaxYtd;exact=true;
+      taxable=d.taxGrossYtd;tax=d.incomeTaxYtd;
     }else if(prev&&Number.isFinite(d.taxGrossYtd)&&Number.isFinite(prev.taxGrossYtd)&&Number.isFinite(d.incomeTaxYtd)&&Number.isFinite(prev.incomeTaxYtd)){
-      const dg=d.taxGrossYtd-prev.taxGrossYtd,dt=d.incomeTaxYtd-prev.incomeTaxYtd;
-      if(dg>0&&dt>=0){taxable=dg;tax=dt;exact=true}
+      taxable=d.taxGrossYtd-prev.taxGrossYtd;
+      tax=d.incomeTaxYtd-prev.incomeTaxYtd;
     }
-    const effective=exact&&taxable>0?tax/taxable*100:null;
-    return {d,month:d.month,marginal:d.marginalTax,taxable,tax,effective,exact};
+    if(Number.isFinite(taxable)&&Number.isFinite(tax)&&taxable>500&&tax>=0){
+      const raw=tax/taxable*100;
+      const gross=d.guard?.summary?.grossCurrent;
+      const grossMatch=!Number.isFinite(gross)||(taxable>=gross*.55&&taxable<=gross*1.65);
+      if(raw>=0&&raw<=45&&grossMatch){
+        effective=raw;exact=true;
+      }else{
+        reason=!grossMatch?"הפרש הברוטו המצטבר אינו תואם לברוטו החודשי שנקרא":"שיעור מחושב מחוץ לטווח האימות";
+      }
+    }else if(Number.isFinite(taxable)||Number.isFinite(tax)){
+      reason="נתוני המס המצטברים אינם מספיקים לחישוב אמין";
+    }
+    return {d,month:d.month,marginal:d.marginalTax,taxable,tax,effective,exact,reason};
   });
 }
 function renderTaxAnalysis(pays){
@@ -334,6 +345,7 @@ function renderTaxAnalysis(pays){
       alerts++;
       S.issues.push({month:x.month,text:"שיעור מס ההכנסה האפקטיבי הוא כ־"+fmt(x.effective)+"% לעומת חציון של כ־"+fmt(effectiveBase)+"% בחודשים שניתנים לחישוב מדויק. מומלץ לבדוק את השינוי."});
     }
+    if(x.reason&&note==="ללא חריגה בולטת")note="מס אפקטיבי לא אומת: "+x.reason;
     const eff=Number.isFinite(x.effective)?fmt(x.effective)+"%":"—";
     const marg=Number.isFinite(x.marginal)?fmt(x.marginal)+"%":"—";
     return '<div class="data-row"><span><b>'+esc(x.month)+'</b><br><span class="small">'+esc(note)+'</span></span><b>שולי '+marg+' · אפקטיבי '+eff+'</b></div>';
@@ -350,7 +362,7 @@ function renderTaxAnalysis(pays){
   el.innerHTML='<article class="month"><div class="month-head"><div><div class="month-name">בדיקת מס רב־חודשית</div><div class="small">'+esc(summary)+'</div></div><span class="badge '+(alerts?"warn":"ok")+'">'+(alerts?"חריגות מס לבדיקה":"ללא חריגה בולטת")+'</span></div>'+
     '<div class="flags"><div class="flag info">'+esc(baseline||"המערכת משווה מס שולי ומס אפקטיבי כאשר הנתונים זמינים.")+'</div>'+
     (!enough?'<div class="flag warn">למגמה אמינה מומלץ להעלות לפחות 3 תלושים, ועדיף 10–12 חודשים כפי שתוכנן.</div>':'')+
-    (exactCount<2?'<div class="flag info">למס אפקטיבי מדויק נדרשים תלושים של חודשים רצופים, משום שהחישוב משתמש בהפרש הנתונים המצטברים.</div>':'')+
+    (exactCount<2?'<div class="flag info">למס אפקטיבי מדויק נדרשים תלושים רצופים וגם התאמה בין הפרש הברוטו המצטבר לברוטו החודשי. נתון שלא עובר אימות לא מוצג כאחוז.</div>':'')+
     '</div><div class="side">'+rows+'</div></article>';
   return {alerts,hasData:series.length>0};
 }
@@ -708,19 +720,36 @@ function parse(kind,text,file){
     d.incomeTaxYtd=taxLabeledAmount(lines,/מס\s*הכנסה\s*שנתי\s*לגביה/,{min:0,max:2000000,pick:"max"});
     d.guard=extractPayrollGuard(clean,lines);
   }else{
+    function durationToken(token){
+      const raw=String(token||"").trim().replace(",",".");
+      let m=raw.match(/^(\d{1,2}):(\d{2})$/);
+      if(m&&+m[2]<=59)return +m[1]+(+m[2]/60);
+      m=raw.match(/^(\d{1,2})\.(\d{2})$/);
+      if(m&&+m[2]<=59)return +m[1]+(+m[2]/60);
+      return null;
+    }
+    function attendanceCandidates(line,pct){
+      const forbidden=new Set([100,125,150,175,200,pct]);
+      const tokens=String(line||"").match(/\d{1,2}:\d{2}|\d{1,2}[.,]\d{2}|\b\d{1,3}\b/g)||[];
+      const out=[];
+      for(const token of tokens){
+        const plain=Number(String(token).replace(",","."));
+        if(forbidden.has(plain))continue;
+        const h=durationToken(token);
+        if(Number.isFinite(h)&&h>=0&&h<80)out.push(h);
+      }
+      return out;
+    }
     function attendanceMetric(pct){
-      let v=fallbackNear(clean,new RegExp("(?:\\b"+pct+"\\s*%|שעות\\s*נוספות\\s*"+pct+")[^0-9\\n]{0,60}(\\d{1,3}(?::\\d{2}|[.,]\\d+)?)","i"));
-      if(Number.isFinite(v))return v;
       const re=new RegExp("(^|[^0-9])"+pct+"\\s*%?([^0-9]|$)");
       for(let i=0;i<lines.length;i++){
         if(!re.test(lines[i]))continue;
-        const neighborhood=lines.slice(i,Math.min(lines.length,i+3));
-        for(const ln of neighborhood){
-          const raw=(ln.match(/\d{1,3}(?::\d{2}|[.,]\d{1,2})/g)||[]);
-          for(const token of raw){
-            const n=toHours(token);
-            if(Number.isFinite(n)&&n>=0&&n<150&&Math.abs(n-pct)>2)return n;
-          }
+        // Prefer the exact OCR row, then immediate neighbors. Plain integers are never
+        // accepted as hour totals because they are often percentage labels.
+        const order=[i,i+1,i-1].filter(j=>j>=0&&j<lines.length);
+        for(const j of order){
+          const cs=attendanceCandidates(lines[j],pct);
+          if(cs.length)return cs[0];
         }
       }
       return null;
@@ -788,8 +817,9 @@ function pairs(){
 function rows(d){
   if(!d)return '<span class="small">לא נמצא</span>';
   const last=d.kind==="payslip"?"כוננות חול – שעות/כמות":"כוננות";
-  return [["125%",d.ot125],["150%",d.ot150],["175%",d.ot175],["200%",d.ot200],[last,d.oncall]]
-    .map(([k,v])=>'<div class="data-row"><span>'+esc(k)+'</span><b>'+fmt(v)+'</b></div>').join("");
+  return [["125%",d.ot125],["150%",d.ot150],["175%",d.ot175],["200%",d.ot200]]
+    .map(([k,v])=>'<div class="data-row"><span>'+esc(k)+'</span><b>'+(Number.isFinite(v)?hh(v):"—")+'</b></div>').join("")+
+    '<div class="data-row"><span>'+esc(last)+'</span><b>'+fmt(d.oncall)+'</b></div>';
 }
 function details(a,p){
   const out=[];
