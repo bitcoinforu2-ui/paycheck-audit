@@ -97,8 +97,10 @@ function metricFromRow(lines,code,rate,factor){
 function fallbackNear(t,re){
   const m=t.match(re); if(!m)return null;
   const s=String(m[1]).replace(",",".");
-  const x=s.match(/^(\d{1,3}):(\d{2})$/);
+  let x=s.match(/^(\d{1,3}):(\d{2})$/);
   if(x)return +x[1]+(+x[2]/60);
+  x=s.match(/^(\d{1,3})\.(\d{2})$/);
+  if(x&&+x[2]<=59)return +x[1]+(+x[2]/60);
   return Number.isFinite(Number(s))?Number(s):null;
 }
 function parse(kind,text,file){
