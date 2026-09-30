@@ -261,8 +261,55 @@ function request(){
   return "שלום,\n\nבבדיקה בין דוח הנוכחות לתלוש השכר עלו הנקודות הבאות לבדיקה:\n\n"+S.issues.map((x,i)=>(i+1)+". חודש "+x.month+": "+x.text).join("\n")+"\n\nאבקש לבדוק מול מערכת הנוכחות ורכיבי השכר ולתקן במידת הצורך.\n\nתודה.";
 }
 
-$("payFiles").onchange=e=>{S.pay=[...e.target.files];$("payList").innerHTML=S.pay.map(f=>'<span class="file-chip">'+esc(f.name)+'</span>').join("")};
-$("attFiles").onchange=e=>{S.att=[...e.target.files];$("attList").innerHTML=S.att.map(f=>'<span class="file-chip">'+esc(f.name)+'</span>').join("")};
+function fileKey(f){return [f.name,f.size,f.lastModified].join("::")}
+function mergeFiles(current,incoming){
+  const seen=new Set(current.map(fileKey)),out=[...current];
+  for(const f of incoming){
+    const k=fileKey(f);
+    if(!seen.has(k)){seen.add(k);out.push(f)}
+  }
+  return out;
+}
+function resetVisibleResults(){
+  ["autoProfileSection","resultsSection","requestSection","reviewSection"].forEach(id=>$(id)?.classList.add("hidden"));
+  $("progressWrap")?.classList.add("hidden");
+}
+function renderSelectedFiles(){
+  const chips=(files,kind)=>files.map((f,i)=>
+    '<span class="file-chip file-chip-removable"><span class="file-name">'+esc(f.name)+'</span>'+
+    '<button type="button" class="file-remove" data-kind="'+kind+'" data-index="'+i+'" aria-label="הסר '+esc(f.name)+'">×</button></span>'
+  ).join("")+(files.length?'<button type="button" class="clear-files" data-kind="'+kind+'">נקה הכל</button>':"");
+
+  $("payList").innerHTML=chips(S.pay,"pay");
+  $("attList").innerHTML=chips(S.att,"att");
+
+  document.querySelectorAll(".file-remove").forEach(btn=>btn.onclick=()=>{
+    const key=btn.dataset.kind==="pay"?"pay":"att",idx=Number(btn.dataset.index);
+    S[key].splice(idx,1);
+    resetVisibleResults();
+    renderSelectedFiles();
+  });
+  document.querySelectorAll(".clear-files").forEach(btn=>btn.onclick=()=>{
+    const key=btn.dataset.kind==="pay"?"pay":"att";
+    S[key]=[];
+    const input=$(key==="pay"?"payFiles":"attFiles"); if(input)input.value="";
+    resetVisibleResults();
+    renderSelectedFiles();
+  });
+}
+
+$("payFiles").onchange=e=>{
+  S.pay=mergeFiles(S.pay,[...e.target.files]);
+  e.target.value="";
+  resetVisibleResults();
+  renderSelectedFiles();
+};
+$("attFiles").onchange=e=>{
+  S.att=mergeFiles(S.att,[...e.target.files]);
+  e.target.value="";
+  resetVisibleResults();
+  renderSelectedFiles();
+};
 $("requestBtn").onclick=()=>{$("requestText").value=request();$("requestSection").classList.remove("hidden");$("requestSection").scrollIntoView({behavior:"smooth"})};
 $("copyRequestBtn").onclick=async()=>{try{await navigator.clipboard.writeText($("requestText").value);$("copyRequestBtn").textContent="הועתק ✓"}catch{}};
 $("copyBtn").onclick=async()=>{try{await navigator.clipboard.writeText(S.report);$("copyBtn").textContent="הועתק ✓"}catch{}};
