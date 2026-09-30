@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-const S={pay:[],att:[],docs:[],issues:[],report:""};
+const S={pay:[],att:[],docs:[],issues:[],report:"",insufficient:false};
 
 const pdfjs=window.pdfjsLib;
 if(!pdfjs)throw new Error("PDFJS_NOT_LOADED");
@@ -100,7 +100,23 @@ async function pdfText(file,base,span){
   return out.join("\n");
 }
 async function imageText(file,base,span){
-  return ocrBlob(file,file.name,base,span);
+  try{
+    const bmp=await createImageBitmap(file);
+    const maxDim=3600;
+    const scale=Math.max(1,Math.min(2.4,maxDim/Math.max(bmp.width,bmp.height)));
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.max(1,Math.round(bmp.width*scale));
+    canvas.height=Math.max(1,Math.round(bmp.height*scale));
+    const ctx=canvas.getContext("2d",{willReadFrequently:true});
+    ctx.fillStyle="#fff";ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.filter="grayscale(1) contrast(1.45)";
+    ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
+    const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("IMAGE_PREPROCESS_FAILED")),"image/jpeg",0.94));
+    return ocrBlob(blob,file.name,base,span);
+  }catch(e){
+    console.warn("image preprocess fallback",e);
+    return ocrBlob(file,file.name,base,span);
+  }
 }
 function prog(t,p){
   $("progressWrap").classList.remove("hidden");$("progressText").textContent=t;
@@ -241,8 +257,12 @@ function estimate(a,p){
   }
   return ok?sum:null;
 }
+function readCount(d){
+  if(!d)return 0;
+  return OT.reduce((n,o)=>n+(Number.isFinite(d[o.k])?1:0),0);
+}
 function render(){
-  S.issues=[];const ps=pairs();let bad=0,warn=0,good=0;
+  S.issues=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
   const pays=S.docs.filter(d=>d.kind==="payslip"),rate=median(pays.map(d=>d.hourly));
   $("autoProfile").innerHTML=[
     ["ערך שעה שזוהה",rate?"₪"+fmt(rate):"לא זוהה"],
@@ -255,8 +275,8 @@ function render(){
   $("monthResults").innerHTML=ps.map(({a,p,fallback,lag,same})=>{
     const m=a?.month!=="לא זוהה"?a?.month:p?.month||"לא זוהה",flags=[];
     let cls="warn",title="דורש בדיקה",gap=null;
-    if(!a){warn++;title="חסר דוח נוכחות";flags.push(["warn","לא נמצא דוח נוכחות מתאים לתלוש."])}
-    else if(!p){warn++;title="חסר תלוש";flags.push(["warn","לא נמצא תלוש מתאים לדוח הנוכחות."])}
+    if(!a){warn++;S.insufficient=true;title="חסר דוח נוכחות";flags.push(["warn","לא נמצא דוח נוכחות מתאים לתלוש."])}
+    else if(!p){warn++;S.insufficient=true;title="חסר תלוש";flags.push(["warn","לא נמצא תלוש מתאים לדוח הנוכחות."])}
     else{
       if(fallback)flags.push(["info","המסמכים הותאמו לפי סדר ההעלאה כי החודש לא זוהה בוודאות באחד מהם."]);
       if(lag)flags.push(["info","שיוך חודש: דוח הנוכחות של חודש העבודה הותאם לתלוש של החודש הבא (M→M+1), בהתאם לדפוס שאומת בתלושים שנבדקו. ההשוואה כוללת את כל חודש הנוכחות — ללא חיתוך אוטומטי ב־24/25."]);
@@ -277,7 +297,14 @@ function render(){
               :x.label+": בדוח נקראו "+fmt(a[x.k])+" שעות ובתלוש "+fmt(p[x.k])+" שעות; חסרות לכאורה "+hh(x.g)+" שעות לבדיקה."});
           }
         });
-      }else{warn++;flags.push(["warn","לא נקראו מספיק רכיבי שעות משני המסמכים."])}
+      }else{
+        warn++;S.insufficient=true;title="לא ניתן להשוות";
+        const ac=readCount(a),pc=readCount(p);
+        if(ac===0&&pc===0)flags.push(["warn","החודש זוהה, אבל טבלאות השעות לא נקראו משני המסמכים. אין כרגע בסיס לקבוע אם יש התאמה או פער."]);
+        else if(ac===0)flags.push(["warn","דוח הנוכחות זוהה, אבל רכיבי השעות שבו לא נקראו. מומלץ להעלות PDF מקורי ולא צילום מסך."]);
+        else if(pc===0)flags.push(["warn","התלוש זוהה, אבל רכיבי השעות שבו לא נקראו. מומלץ להעלות PDF מקורי ולא צילום מסך."]);
+        else flags.push(["warn","לא נקראו מספיק רכיבי שעות משני המסמכים כדי לבצע השוואה אמינה."]);
+      }
       if(Number.isFinite(p.oncall))flags.push(["info","כוננות חול בתלוש: "+fmt(p.oncall)+" שעות/כמות לחישוב שכר. זה אינו מספר הכוננויות."]);
       const est=estimate(a,p);if(est)flags.push(["info","אומדן כספי גולמי לפי התעריפים שנקראו: כ־₪"+fmt(est)+"."]);
     }
@@ -288,12 +315,13 @@ function render(){
   }).join("");
 
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n");
-  const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים משמעותיים לבדיקה."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
+  const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים משמעותיים לבדיקה."}else if(S.insufficient){o.className="overall warn";o.textContent="הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
   $("resultsSection").classList.remove("hidden");
   $("reviewRows").innerHTML=S.docs.map((d,i)=>'<div class="review-doc"><b>'+(d.kind==="payslip"?"📄 תלוש":"🕒 נוכחות")+' · '+esc(d.month)+' · '+esc(d.fileName)+'</b></div>').join("");
   $("reviewSection").classList.remove("hidden");
 }
 function request(){
+  if(!S.issues.length&&S.insufficient)return "שלום,\n\nניסיתי לבצע השוואה בין תלוש השכר לדוח הנוכחות, אך חלק מרכיבי השעות במסמכים לא נקראו בצורה שמאפשרת השוואה אמינה. אבקש בדיקה ידנית של הנתונים המצורפים.\n\nתודה.";
   if(!S.issues.length)return "שלום,\n\nביצעתי בדיקה של תלוש השכר מול דוח הנוכחות ולא נמצא כרגע פער ברור שניתן לנסח כפנייה. אבקש בדיקה כללית של הנתונים המצורפים.\n\nתודה.";
   return "שלום,\n\nבבדיקה בין דוח הנוכחות לתלוש השכר עלו הנקודות הבאות לבדיקה:\n\n"+S.issues.map((x,i)=>(i+1)+". חודש "+x.month+": "+x.text).join("\n")+"\n\nאבקש לבדוק מול מערכת הנוכחות ורכיבי השכר ולתקן במידת הצורך.\n\nתודה.";
 }
