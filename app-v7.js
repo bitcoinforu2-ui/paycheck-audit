@@ -274,13 +274,14 @@ function taxLabeledAmount(lines,re,{min=0,max=5000000,pick="max"}={}){
 function taxMarginalRate(lines){
   for(const line of lines){
     if(!/מס\s*שולי/.test(line))continue;
-    const xs=[...new Set(lineNums(line).filter(v=>v>=0&&v<=60).map(v=>Math.round(v*100)/100))];
-    if(!xs.length)continue;
-    // Municipal payslips often print 20.00 near the "מס שולי" label.
-    // Prefer a plausible tax percentage rather than unrelated small layout numbers.
-    const preferred=xs.filter(v=>v>=5&&v<=55);
-    if(preferred.length)return preferred.sort((a,b)=>Math.abs(a-25)-Math.abs(b-25))[0];
-    return xs[0];
+    const direct=line.match(/מס\s*שולי[^0-9]{0,24}(\d{1,2}(?:[.,]\d+)?)/)||
+      line.match(/(\d{1,2}(?:[.,]\d+)?)\s*[^0-9]{0,12}%?\s*מס\s*שולי/);
+    if(direct){
+      const v=num(direct[1]);
+      if(Number.isFinite(v)&&v>=0&&v<=60)return v;
+    }
+    const xs=[...new Set(lineNums(line).filter(v=>v>=5&&v<=55).map(v=>Math.round(v*100)/100))];
+    if(xs.length===1)return xs[0];
   }
   return null;
 }
