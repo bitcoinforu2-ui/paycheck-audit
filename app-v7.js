@@ -1,8 +1,9 @@
 const $=id=>document.getElementById(id);
 const S={pay:[],att:[],docs:[],issues:[],report:""};
 
-const pdfjs=await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs");
-pdfjs.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+const pdfjs=window.pdfjsLib;
+if(!pdfjs)throw new Error("PDFJS_NOT_LOADED");
+pdfjs.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
 
 const OT=[
   {k:"ot125",code:"1125",label:"125%",f:1.25},
@@ -375,7 +376,7 @@ $("analyzeBtn").onclick=async()=>{
       $("autoProfileSection").scrollIntoView({behavior:"smooth"});
     }
     if(failed.length){
-      const names=failed.map(x=>"• "+x.name).join("\n");
+      const names=failed.map(x=>"• "+x.name+" ["+x.reason+"]").join("\n");
       alert("הבדיקה המשיכה, אבל לא הצלחתי לקרוא "+failed.length+" קובץ/ים:\n"+names+"\n\nאפשר להסיר אותם מהרשימה ולנסות שוב, או להעלות PDF מקורי/צילום חד.");
     }else if(!S.docs.length){
       alert("לא הצלחתי לקרוא אף אחד מהקבצים שנבחרו. נסה PDF מקורי או צילום חד יותר.");
