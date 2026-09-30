@@ -260,10 +260,104 @@ function fallbackNear(t,re){
   if(x&&+x[2]<=59)return +x[1]+(+x[2]/60);
   return Number.isFinite(Number(s))?Number(s):null;
 }
+function taxLabeledAmount(lines,re,{min=0,max=5000000,pick="max"}={}){
+  for(const line of lines){
+    if(!re.test(line))continue;
+    const xs=[...new Set(lineNums(line).filter(v=>v>=min&&v<=max).map(v=>Math.round(v*100)/100))];
+    if(!xs.length)continue;
+    if(pick==="min")return Math.min(...xs);
+    if(pick==="median")return median(xs);
+    return Math.max(...xs);
+  }
+  return null;
+}
+function taxMarginalRate(lines){
+  for(const line of lines){
+    if(!/מס\s*שולי/.test(line))continue;
+    const xs=[...new Set(lineNums(line).filter(v=>v>=0&&v<=60).map(v=>Math.round(v*100)/100))];
+    if(!xs.length)continue;
+    // Municipal payslips often print 20.00 near the "מס שולי" label.
+    // Prefer a plausible tax percentage rather than unrelated small layout numbers.
+    const preferred=xs.filter(v=>v>=5&&v<=55);
+    if(preferred.length)return preferred.sort((a,b)=>Math.abs(a-25)-Math.abs(b-25))[0];
+    return xs[0];
+  }
+  return null;
+}
+function modeRounded(values){
+  const m=new Map();
+  for(const v of values.filter(Number.isFinite)){
+    const k=(Math.round(v*100)/100).toFixed(2);
+    m.set(k,(m.get(k)||0)+1);
+  }
+  let best=null,n=-1;
+  for(const [k,c] of m)if(c>n){best=Number(k);n=c}
+  return best;
+}
+function taxMonthSeries(pays){
+  const known=pays.filter(d=>d.month!=="לא זוהה").sort((a,b)=>monthKey(a.month)-monthKey(b.month));
+  const byMonth=new Map(known.map(d=>[d.month,d]));
+  return known.map(d=>{
+    let taxable=null,tax=null,exact=false;
+    const [mm]=d.month.split("/").map(Number);
+    const prev=byMonth.get(shift(d.month,-1));
+    if(mm===1&&Number.isFinite(d.taxGrossYtd)&&Number.isFinite(d.incomeTaxYtd)){
+      taxable=d.taxGrossYtd;tax=d.incomeTaxYtd;exact=true;
+    }else if(prev&&Number.isFinite(d.taxGrossYtd)&&Number.isFinite(prev.taxGrossYtd)&&Number.isFinite(d.incomeTaxYtd)&&Number.isFinite(prev.incomeTaxYtd)){
+      const dg=d.taxGrossYtd-prev.taxGrossYtd,dt=d.incomeTaxYtd-prev.incomeTaxYtd;
+      if(dg>0&&dt>=0){taxable=dg;tax=dt;exact=true}
+    }
+    const effective=exact&&taxable>0?tax/taxable*100:null;
+    return {d,month:d.month,marginal:d.marginalTax,taxable,tax,effective,exact};
+  });
+}
+function renderTaxAnalysis(pays){
+  const el=$("taxAnalysis");if(!el)return {alerts:0,hasData:false};
+  const series=taxMonthSeries(pays);
+  const marginalVals=series.map(x=>x.marginal).filter(Number.isFinite);
+  const effectiveVals=series.map(x=>x.effective).filter(Number.isFinite);
+  const marginalBase=modeRounded(marginalVals);
+  const effectiveBase=median(effectiveVals);
+  const effectiveThreshold=Number.isFinite(effectiveBase)?Math.max(1.5,Math.abs(effectiveBase)*.15):null;
+  let alerts=0;
+  const rows=series.map(x=>{
+    let status="ok",note="ללא חריגה בולטת";
+    if(Number.isFinite(x.marginal)&&Number.isFinite(marginalBase)&&Math.abs(x.marginal-marginalBase)>.05){
+      const dir=x.marginal>marginalBase?"גבוה":"נמוך";
+      status="warn";note="מס שולי "+dir+" מהשיעור הנפוץ ("+fmt(marginalBase)+"%)";alerts++;
+      S.issues.push({month:x.month,text:"אחוז המס השולי הוא "+fmt(x.marginal)+"% לעומת "+fmt(marginalBase)+"% ברוב התלושים. מומלץ לבדוק את הסיבה לשינוי."});
+    }
+    if(Number.isFinite(x.effective)&&Number.isFinite(effectiveBase)&&Math.abs(x.effective-effectiveBase)>=effectiveThreshold){
+      const dir=x.effective>effectiveBase?"גבוה יותר":"נמוך יותר";
+      status="warn";note="מס אפקטיבי "+dir+" משאר החודשים";
+      alerts++;
+      S.issues.push({month:x.month,text:"שיעור מס ההכנסה האפקטיבי הוא כ־"+fmt(x.effective)+"% לעומת חציון של כ־"+fmt(effectiveBase)+"% בחודשים שניתנים לחישוב מדויק. מומלץ לבדוק את השינוי."});
+    }
+    const eff=Number.isFinite(x.effective)?fmt(x.effective)+"%":"—";
+    const marg=Number.isFinite(x.marginal)?fmt(x.marginal)+"%":"—";
+    return '<div class="data-row"><span><b>'+esc(x.month)+'</b><br><span class="small">'+esc(note)+'</span></span><b>שולי '+marg+' · אפקטיבי '+eff+'</b></div>';
+  }).join("");
+
+  const enough=series.length>=3;
+  const exactCount=effectiveVals.length;
+  const summary=series.length
+    ?'נבדקו '+series.length+' תלושי שכר. חישוב מס אפקטיבי מדויק זמין ב־'+exactCount+' חודשים רצופים.'
+    :'לא זוהו מספיק תלושי שכר לצורך בדיקת מס רב־חודשית.';
+  const baseline=(Number.isFinite(marginalBase)?'מס שולי נפוץ: '+fmt(marginalBase)+'%. ':'')+
+    (Number.isFinite(effectiveBase)?'חציון מס אפקטיבי: '+fmt(effectiveBase)+'%.':'');
+
+  el.innerHTML='<article class="month"><div class="month-head"><div><div class="month-name">בדיקת מס רב־חודשית</div><div class="small">'+esc(summary)+'</div></div><span class="badge '+(alerts?"warn":"ok")+'">'+(alerts?"חריגות מס לבדיקה":"ללא חריגה בולטת")+'</span></div>'+
+    '<div class="flags"><div class="flag info">'+esc(baseline||"המערכת משווה מס שולי ומס אפקטיבי כאשר הנתונים זמינים.")+'</div>'+
+    (!enough?'<div class="flag warn">למגמה אמינה מומלץ להעלות לפחות 3 תלושים, ועדיף 10–12 חודשים כפי שתוכנן.</div>':'')+
+    (exactCount<2?'<div class="flag info">למס אפקטיבי מדויק נדרשים תלושים של חודשים רצופים, משום שהחישוב משתמש בהפרש הנתונים המצטברים.</div>':'')+
+    '</div><div class="side">'+rows+'</div></article>';
+  return {alerts,hasData:series.length>0};
+}
+
 function parse(kind,text,file){
   const clean=String(text||"").replace(/[\u200e\u200f]/g," ");
   const lines=clean.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
-  const d={kind,fileName:file.name,month:month(clean),hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40};
+  const d={kind,fileName:file.name,month:month(clean),hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null};
   if(kind==="payslip"){
     const explicitRate=hourly(lines);
     const inferredRates=[];
@@ -287,6 +381,11 @@ function parse(kind,text,file){
     }
     d.hourly=Number.isFinite(explicitRate)?explicitRate:median(inferredRates);
     d.hourlySource=Number.isFinite(explicitRate)?"ע.שעה / ערך שעה בתלוש":(Number.isFinite(d.hourly)?"נגזר מתעריפי עבודה נוספת":null);
+
+    // Multi-month tax audit fields.
+    d.marginalTax=taxMarginalRate(lines);
+    d.taxGrossYtd=taxLabeledAmount(lines,/ברוטו\s*למס\s*הכנסה/,{min:100,max:5000000,pick:"max"});
+    d.incomeTaxYtd=taxLabeledAmount(lines,/מס\s*הכנסה\s*שנתי\s*לגביה/,{min:0,max:2000000,pick:"max"});
   }else{
     function attendanceMetric(pct){
       let v=fallbackNear(clean,new RegExp("(?:\\b"+pct+"\\s*%|שעות\\s*נוספות\\s*"+pct+")[^0-9\\n]{0,60}(\\d{1,3}(?::\\d{2}|[.,]\\d+)?)","i"));
@@ -482,6 +581,8 @@ function render(){
       '<div class="flags">'+flags.map(([c,t])=>'<div class="flag '+c+'">'+esc(t)+'</div>').join("")+'</div></article>';
   }).join("");
 
+  const taxAudit=renderTaxAnalysis(pays);
+  if(taxAudit.alerts)warn+=taxAudit.alerts;
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n");
   const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים משמעותיים לבדיקה."}else if(S.insufficient){o.className="overall warn";o.textContent="הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
   $("resultsSection").classList.remove("hidden");
