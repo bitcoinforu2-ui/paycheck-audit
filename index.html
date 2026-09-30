@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>בדיקת שכר חכמה</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="eyebrow">PAYCHECK AUDIT • V5 SELF-SERVICE</div>
+    <h1>בדיקת התלוש שלי</h1>
+    <p>מעלים תלוש ודוח נוכחות, מזינים תנאי עבודה בסיסיים ומקבלים פערים אפשריים ופנייה מוכנה לבדיקה מול מחלקת השכר.</p>
+  </div>
+  <span class="privacy">🔒 עיבוד מקומי</span>
+</header>
+
+<main>
+  <section class="card intro">
+    <h2>בדיקה אישית ב־4 צעדים</h2>
+    <div class="steps steps-4">
+      <div><b>1</b><span>מגדירים תנאים בסיסיים</span></div>
+      <div><b>2</b><span>מעלים תלוש שכר</span></div>
+      <div><b>3</b><span>מעלים דוח נוכחות</span></div>
+      <div><b>4</b><span>מקבלים פערים ופנייה מוכנה</span></div>
+    </div>
+  </section>
+
+  <section class="card profile-card">
+    <div class="section-head">
+      <div>
+        <div class="eyebrow dark">EMPLOYMENT PROFILE</div>
+        <h2>התנאים שלי</h2>
+        <p class="small">רק מה שידוע לך. שדות ריקים לא ישמשו לקביעה.</p>
+      </div>
+      <span class="local-pill">נשמר רק במכשיר</span>
+    </div>
+    <div class="profile-grid">
+      <label>סוג שכר
+        <select id="salaryType">
+          <option value="unknown">לא יודע / לא רלוונטי</option>
+          <option value="hourly">שעתי</option>
+          <option value="monthly">חודשי</option>
+        </select>
+      </label>
+      <label>שכר שעה בסיסי (₪)
+        <input id="hourlyRate" inputmode="decimal" placeholder="לדוגמה 49.24">
+      </label>
+      <label>שעות שבועיות לפי ההסכם
+        <input id="weeklyHours" inputmode="decimal" placeholder="לדוגמה 40">
+      </label>
+      <label>כוננויות / יחידות צפויות בחודש
+        <input id="expectedOncall" inputmode="decimal" placeholder="אופציונלי">
+      </label>
+      <label>תעריף ליחידת כוננות (₪)
+        <input id="oncallRate" inputmode="decimal" placeholder="אופציונלי">
+      </label>
+      <label class="profile-notes">תנאי מיוחד שחשוב לבדיקה
+        <textarea id="profileNotes" rows="2" placeholder="למשל: תשלום שעות נוספות בחודש העוקב"></textarea>
+      </label>
+    </div>
+    <div class="profile-actions">
+      <label class="remember"><input id="rememberProfile" type="checkbox" checked> זכור את התנאים במכשיר הזה</label>
+      <button id="saveProfileBtn" class="secondary">שמור תנאים</button>
+      <button id="clearDataBtn" class="ghost">מחק נתונים מקומיים</button>
+    </div>
+  </section>
+
+  <section class="upload-grid">
+    <article class="card">
+      <div class="type-tag">תלושי שכר</div>
+      <h2>📄 שכר</h2>
+      <p>PDF או צילום. אפשר כמה חודשים יחד.</p>
+      <label class="drop">
+        <input id="payFiles" type="file" accept="application/pdf,image/*" multiple>
+        <strong>הוסף תלושים</strong>
+        <span>לחץ לבחירת קבצים</span>
+      </label>
+      <div id="payList" class="file-list"></div>
+    </article>
+
+    <article class="card">
+      <div class="type-tag">כניסה / יציאה</div>
+      <h2>🕒 נוכחות</h2>
+      <p>PDF או צילום. אפשר כמה חודשים יחד.</p>
+      <label class="drop">
+        <input id="attFiles" type="file" accept="application/pdf,image/*" multiple>
+        <strong>הוסף דוחות נוכחות</strong>
+        <span>לחץ לבחירת קבצים</span>
+      </label>
+      <div id="attList" class="file-list"></div>
+    </article>
+  </section>
+
+  <section class="card">
+    <button id="analyzeBtn" class="primary">בדוק פערים</button>
+    <div id="progressWrap" class="hidden">
+      <div class="progress-title"><span id="progressText">מתחיל…</span><span id="progressPct">0%</span></div>
+      <div class="progress"><div id="progressBar"></div></div>
+    </div>
+  </section>
+
+  <section id="resultsSection" class="hidden">
+    <div class="result-title">
+      <div>
+        <div class="eyebrow dark">RESULTS</div>
+        <h2>תוצאות לפי חודש</h2>
+      </div>
+      <div class="result-actions">
+        <button id="copyBtn" class="secondary">העתק סיכום</button>
+        <button id="requestBtn" class="primary compact">הכן פנייה למחלקת שכר</button>
+      </div>
+    </div>
+    <div id="overall" class="overall"></div>
+    <div id="monthResults"></div>
+  </section>
+
+  <section id="requestSection" class="card hidden">
+    <div class="section-head">
+      <div><div class="eyebrow dark">READY TO COPY</div><h2>פנייה מוכנה לבדיקה</h2></div>
+      <button id="copyRequestBtn" class="primary compact">העתק פנייה</button>
+    </div>
+    <textarea id="requestText" class="request-text" rows="10" readonly></textarea>
+    <p class="small">העובד שולח את הפנייה בעצמו דרך אפליקציית העירייה. האפליקציה הזו אינה שולחת מידע למחלקת השכר.</p>
+  </section>
+
+  <section id="reviewSection" class="card hidden">
+    <details>
+      <summary><b>בדיקת נתונים ידנית</b> — אם מסמך לא נקרא טוב</summary>
+      <p class="small">אפשר לתקן את הערכים שהמערכת חילצה ולחשב מחדש. זה חשוב במיוחד בצילומים מטושטשים או פורמט לא מוכר.</p>
+      <div id="reviewRows"></div>
+      <button id="recalcBtn" class="secondary wide">חשב מחדש</button>
+    </details>
+  </section>
+
+  <section class="card disclaimer">
+    <b>חשוב:</b>
+    <span>התוצאה היא כלי עזר לאיתור פערים אפשריים, לא קביעה משפטית או חשבונאית. לפני שליחת פנייה יש לוודא שהנתונים שחולצו נכונים. הסכמים קיבוציים, מועדי חיתוך שכר, תשלום בחודש עוקב, חופשה, מחלה והסדרים מיוחדים יכולים להסביר פערים.</span>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>
