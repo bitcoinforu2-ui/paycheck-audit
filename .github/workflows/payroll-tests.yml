@@ -22,4 +22,4 @@ jobs:
       - name: Check trends module syntax
         run: node --check payroll-trends.mjs
       - name: Run multi-month payroll regression tests
-        run: node --test tests/payroll-trends.test.mjs
+        run: node --test tests/*.test.mjs
