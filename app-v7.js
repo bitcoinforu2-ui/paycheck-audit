@@ -345,7 +345,7 @@ function metricFromRow(lines,code,rate,factor,labelNumber=null){
   if(idx>=0){
     const values=lineNums(lines[idx]);
     const hit=metricFromNums(values,rate,factor,[Number(code),labelNumber]);
-    if(hit)return hit;
+    if(hit)return {...hit,source:'exact-code-row'};
   }
 
   // Screenshot/OCR fallback: codes are often missed while "125 / 150 / 175 / 200"
@@ -356,7 +356,7 @@ function metricFromRow(lines,code,rate,factor,labelNumber=null){
       if(!re.test(lines[i]))continue;
       const block=lines.slice(Math.max(0,i-2),Math.min(lines.length,i+3)).join(" ");
       const hit=metricFromNums(lineNums(block),rate,factor,[Number(code),labelNumber]);
-      if(hit)return hit;
+      if(hit)return {...hit,source:'OCR-neighbor-inference'};
     }
   }
   return null;
@@ -849,12 +849,14 @@ function parse(kind,text,file){
   if(kind==="payslip"){
     const explicitRate=hourly(lines);
     const inferredRates=[];
+    d.payEvidence={};
     d.hourlySource=null;
     for(const o of OT){
       const pct=Number(o.label.replace(/\D/g,""))||null;
       const m=metricFromRow(lines,o.code,explicitRate,o.f,pct);
       if(m){
         d[o.k]=m.q;d.tariffs[o.k]=m.tariff;
+        d.payEvidence[o.k]=m.source;
         if(Number.isFinite(m.base))inferredRates.push(m.base);
       }
     }
@@ -867,6 +869,7 @@ function parse(kind,text,file){
       d.oncall=on.q;d.tariffs.oncall=on.tariff;
       if(Number.isFinite(on.base))inferredRates.push(on.base);
     }
+    d.payrollCodesVerified=OT.every(o=>d.payEvidence[o.k]==='exact-code-row');
     d.hourly=Number.isFinite(explicitRate)?explicitRate:median(inferredRates);
     d.hourlySource=Number.isFinite(explicitRate)?"ע.שעה / ערך שעה בתלוש":(Number.isFinite(d.hourly)?"נגזר מתעריפי עבודה נוספת":null);
 
@@ -1015,15 +1018,19 @@ function render(){
   ].map(([k,v])=>'<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
   $("autoProfileSection").classList.remove("hidden");
   const typeSummary=$("typeSummary");
-  if(typeSummary)typeSummary.innerHTML='<div class="flag info">זוהו לפי תוכן הקבצים: '+
+  if(typeSummary)typeSummary.innerHTML='<div class="flag info">זוהו לפי התוכן: '+
     pays.length+' תלושי שכר, '+S.docs.filter(d=>d.kind==="attendance").length+
     ' דוחות נוכחות'+(unresolved.length?' · '+unresolved.length+
-    ' מסמכים דורשים זיהוי ידני':'')+'. הקבצים ממוינים לפי חודש העבודה ומשויכים לתלוש בחודש העוקב.</div>';
+    ' מסמכים שלא זוהו':'')+'. התאמת חודשים: דוח M ← תלוש M+1.</div>'+
+    '<details><summary>בדוק אילו קבצים וחודשים זוהו</summary>'+
+    S.docs.map(d=>'<div class="data-row"><span>'+esc(d.fileName)+'</span><b>'+
+      (d.kind==="payslip"?"תלוש":d.kind==="attendance"?"נוכחות":"לא זוהה")+
+      ' · '+esc(d.month)+'</b></div>').join('')+'</details>';
 
   $("monthResults").innerHTML=ps.map(({a,p,fallback,lag,same})=>{
     const m=a&&a.month!=="לא זוהה"?a.month:(p?.month||"לא זוהה"),flags=[];
     let cls="warn",title="דורש בדיקה",gap=null;
-    if(!a){warn++;S.insufficient=true;title="אין דוח משויך";flags.push(["info","לתלוש "+(p?.month||"לא זוהה")+" נדרש דוח נוכחות של "+(p?.month!=="לא זוהה"?shift(p.month,-1):"החודש הקודם")+". אם הדוח הועלה, יש לוודא שחודש העבודה נקרא נכון; לא נוצר פער כספי."])}
+    if(!a){warn++;S.insufficient=true;title=unresolved.length?"שיוך דורש אימות":"אין דוח משויך";flags.push(["info","לתלוש "+(p?.month||"לא זוהה")+" דרוש דוח נוכחות "+(p?.month!=="לא זוהה"?shift(p.month,-1):"החודש הקודם")+". "+(unresolved.length?"יש "+unresolved.length+" קבצים שלא זוהו, וייתכן שאחד מהם מתאים. הצג את רשימת הקבצים ותקן במידת הצורך.":"לא אותר דוח מתאים בקבצים שזוהו.")+" אין מסקנה כספית."])}
     else if(!p){warn++;S.insufficient=true;title="אין תלוש משויך";flags.push(["info",a.month==="לא זוהה"?"לא זוהה חודש העבודה בדוח. יש לבחור את חודש העבודה בבדיקת נתונים ידנית.":"דוח "+a.month+" מחייב תלוש "+shift(a.month,1)+". לא נמצא תלוש מאומת מתאים; לא נוצר פער כספי."])}
     else{
       if(fallback)flags.push(["info","שיוך לפי סדר העלאה אינו מאומת ואינו בסיס למסקנה כספית."]);
@@ -1046,14 +1053,15 @@ function render(){
       // Never label a discrepancy or estimate money when OCR has read only
       // 1/4 or 2/4 overtime categories, when the payroll period is ambiguous,
       // or when extraction confidence is low.
-      const trustworthy=complete&&lag&&!fallback&&a.verifiedAttendanceSummary&&a.month!=="לא זוהה"&&a.confidence>=90&&p.confidence>=85;
+      const trustworthy=complete&&lag&&!fallback&&a.verifiedAttendanceSummary&&a.month!=="לא זוהה"&&a.confidence>=90&&p.payrollCodesVerified;
       if(!trustworthy){
         S.insufficient=true;
         if(a.month==="לא זוהה")flags.push(["info","חודש העבודה אינו מזוהה בוודאות מתוך כותרת הדוח. תאריך ההפקה אינו חודש העבודה."]);
+        if(!p.payrollCodesVerified)flags.push(["info","התלוש נקרא אך לא כל ארבע הכמויות אומתו ישירות מול שורות קוד השכר; ציון קריאה קודם אינו אימות כספי."]);
         if(!a.verifiedAttendanceSummary)flags.push(["info","סיכום שעות הנוכחות לא אומת מהעמודות המקוריות של ה-PDF; אין אומדן כספי."]);
         warn++;cls="warn";title="השוואה לא מאומתת";
         if(ds.length){
-          flags.push(["info","נראים הבדלים בנתונים שנקראו, אך השוואת השעות אינה מלאה או שיוך התקופה אינו ודאי. לא ניתן לקבוע חוסר או אומדן כספי."]);
+          flags.push(["info","בהשוואה ראשונית: "+hourDifferenceText(audit)+". מקור הנתונים אינו מאומת במלואו. אין לקבוע חוסר כספי."]);
         }else{
           flags.push(["info","הבדיקה אינה מלאה; יש להשלים נתונים לפני מסקנה כספית."]);
         }
@@ -1092,7 +1100,7 @@ function render(){
       // No monetary estimates before a verified adjustment ledger is available.
     }
     return '<article class="month"><div class="month-head"><div><div class="month-name">חודש '+esc(m)+'</div><div class="small">תלוש משויך: '+esc(p?.month||"—")+'</div></div><span class="badge '+cls+'">'+title+'</span></div>'+
-      '<div class="metrics"><div class="metric"><div class="k">נוכחות — נוספות</div><div class="v">'+(a?.otTotal==null?"—":hh(a.otTotal))+'</div></div><div class="metric"><div class="k">תלוש — נוספות</div><div class="v">'+(p?.otTotal==null?"—":hh(p.otTotal))+'</div></div><div class="metric"><div class="k">הפרש שעות (נוכחות פחות תלוש)</div><div class="v">'+(gap==null?"—":hh(gap))+'</div></div><div class="metric"><div class="k">ביטחון קריאה</div><div class="v">'+(a&&p?Math.min(a.confidence,p.confidence)+"%":"—")+'</div></div></div>'+
+      '<div class="metrics"><div class="metric"><div class="k">נוכחות — נוספות</div><div class="v">'+(a?.otTotal==null?"—":hh(a.otTotal))+'</div></div><div class="metric"><div class="k">תלוש — נוספות</div><div class="v">'+(p?.otTotal==null?"—":hh(p.otTotal))+'</div></div><div class="metric"><div class="k">הפרש שעות (נוכחות פחות תלוש)</div><div class="v">'+(gap==null?"—":hh(gap))+'</div></div><div class="metric"><div class="k">אימות מקורות</div><div class="v">'+(a&&p?(a.verifiedAttendanceSummary?"דוח ✓":"דוח ?")+" / "+(p.payrollCodesVerified?"תלוש ✓":"תלוש ?"):"—")+'</div></div></div>'+
       '<div class="compare"><div class="side"><h3>🕒 נוכחות</h3>'+rows(a)+'</div><div class="side"><h3>📄 תלוש</h3>'+rows(p)+'</div></div>'+
       '<div class="flags">'+flags.map(([c,t])=>'<div class="flag '+c+'">'+esc(t)+'</div>').join("")+'</div></article>';
   }).join("");
