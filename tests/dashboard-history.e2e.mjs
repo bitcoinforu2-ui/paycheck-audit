@@ -54,7 +54,9 @@ try{
  assert.equal(await page.locator("#guardDetails").getAttribute("open"),"");
  assert.deepEqual(errors,[],"no browser JS runtime errors");
  fs.mkdirSync("/tmp/payroll-screens",{recursive:true});
- await page.screenshot({path:"/tmp/payroll-screens/dashboard-desktop.png",fullPage:true});
+ await page.evaluate(()=>window.scrollTo({top:0,behavior:"instant"}));
+ await page.screenshot({path:"/tmp/payroll-screens/dashboard-desktop.png",fullPage:false});
+ await page.screenshot({path:"/tmp/payroll-screens/dashboard-fullpage.png",fullPage:true});
  console.log("DASHBOARD_E2E_PASS: no fake money; 3 imported months; history trend; overtime; finding; private-only.");
  const phone=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
  await phone.route("**/pdf.min.js",r=>r.fulfill({status:200,contentType:"text/javascript",
