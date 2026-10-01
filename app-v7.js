@@ -42,6 +42,11 @@ function lineNums(line){return (String(line).match(/-?\d{1,3}(?:,\d{3})*(?:\.\d+
 // Absence or contradictory evidence => manual review, not automatic classification.
 function detectDocumentKind(text){
   const t=String(text||"").replace(/[\u200e\u200f]/g," ").replace(/\s+/g," ");
+  const compact=t.replace(/\s/g,"");
+  // Verified monthly PDF geometry is a stronger identifier than scrambled
+  // Hebrew glyph order. Never classify from the upload field.
+  if(/@@ATT_PDF_META\s+\{[^\n]*"method":"pdf-positioned-monthly-summary"/.test(String(text||"")))
+    return {kind:"attendance",confidence:20,reason:"verified-pdf-geometry"};
   const features={
     payslip:[
       [/(?:שכר\s*בסיס|סיסב\s*רכש)/,5],
@@ -62,12 +67,17 @@ function detectDocumentKind(text){
     ]
   };
   const score=kind=>features[kind].reduce((n,[re,points])=>n+(re.test(t)?points:0),0);
-  const pay=score("payslip"),att=score("attendance");
+  let pay=score("payslip"),att=score("attendance");
+  // PDF text extraction frequently separates EVERY Hebrew glyph; compact
+  // signature recognition is necessary even when the raw page has lots of text.
+  if(/(?:ןוילגתוחכונ|תוחכונםכסמ|גליוןנוכחות|גיליוןנוכחות)/.test(compact))att+=7;
+  if(/(?:תוליגרתורמשמ|משמרותרגילות)/.test(compact))att+=3;
+  if(/(?:סיסברכש|שכרבסיס)/.test(compact))pay+=5;
+  if(/(?:קנבבםוכס|סכוםבבנק)/.test(compact))pay+=4;
   if(pay>=6&&pay>=att+4)return {kind:"payslip",confidence:pay,reason:"content-signatures"};
   if(att>=6&&att>=pay+4)return {kind:"attendance",confidence:att,reason:"content-signatures"};
   return {kind:"unknown",confidence:0,reason:"insufficient-or-ambiguous-signatures"};
 }
-
 function pdfRows(items){
   const rows=[];
   for(const it of items){
@@ -127,21 +137,34 @@ function attendancePdfTotals(items,width,height){
 // Some report headings contain visibly printed month text NOT exposed via the
 // PDF text layer. OCR only this tiny, isolated heading without the report date.
 async function attendancePdfMonth(page){
-  const scale=3.5,view=page.getViewport({scale}),full=document.createElement("canvas");
+  // The report period (e.g. 08/2026) is painted at PDF coordinates x=213..257,
+  // y=8..23 and is NOT exposed in the PDF text layer. The old wide crop
+  // included Hebrew letters and punctuation and consistently missed the date.
+  const base=page.getViewport({scale:1});
+  if(base.width/base.height<0.63||base.width/base.height>0.78)return null;
+  const scale=6,view=page.getViewport({scale}),full=document.createElement("canvas");
   full.width=Math.ceil(view.width);full.height=Math.ceil(view.height);
-  await page.render({canvasContext:full.getContext("2d"),viewport:view}).promise;
-  const small=document.createElement("canvas");
-  small.width=Math.round(full.width*.19);small.height=Math.round(50*scale);
-  const ctx=small.getContext("2d");
-  ctx.fillStyle="#fff";ctx.fillRect(0,0,small.width,small.height);
-  ctx.drawImage(full,Math.round(full.width*.285),0,small.width,small.height,0,0,small.width,small.height);
-  const blob=await canvasBlob(small,"image/png");
-  const r=await Tesseract.recognize(blob,"eng",{tessedit_char_whitelist:"0123456789/.-"});
-  const months=[...new Set([...String(r.data?.text||"").matchAll(/(?:^|[^\d])(0?[1-9]|1[0-2])[/.-](20\d{2})(?!\d)/g)]
-    .map(m=>String(+m[1]).padStart(2,"0")+"/"+m[2]))];
-  return months.length===1?months[0]:null;
+  try{
+    await page.render({canvasContext:full.getContext("2d"),viewport:view}).promise;
+    const crop=document.createElement("canvas");
+    const templateScale=base.width/595;
+    const left=213*templateScale,top=8*templateScale;
+    const w=44*templateScale,h=15*templateScale;
+    crop.width=Math.round(w*scale);crop.height=Math.round(h*scale);
+    const ctx=crop.getContext("2d");
+    ctx.fillStyle="#fff";ctx.fillRect(0,0,crop.width,crop.height);
+    ctx.drawImage(full,Math.round(left*scale),Math.round(top*scale),
+      crop.width,crop.height,0,0,crop.width,crop.height);
+    const blob=await canvasBlob(crop,"image/png");
+    // One OCR call on ONLY numeric header, never on the whole PDF, and
+    // never on the document-generation timestamp elsewhere on the page.
+    const r=await Tesseract.recognize(blob,"eng",{
+      tessedit_pageseg_mode:7,tessedit_char_whitelist:"0123456789/"});
+    const matches=[...new Set([...String(r.data?.text||"").matchAll(/(?:^|[^\d])(0?[1-9]|1[0-2])\/(20\d{2})(?!\d)/g)]
+      .map(m=>String(+m[1]).padStart(2,"0")+"/"+m[2]))];
+    return matches.length===1?matches[0]:null;
+  }finally{full.width=0;full.height=0}
 }
-
 async function ocrBlob(blob,label,base,span){
   const r=await Tesseract.recognize(blob,"heb+eng",{logger:m=>{
     if(m.status==="recognizing text")prog("OCR: "+label,base+span*(m.progress||0));
@@ -174,13 +197,15 @@ async function pdfText(file,base,span,kind){
     if(txt.replace(/\s+/g,"").length<40)
       txt=await ocrPdfPage(pg,file.name,i,pb,ps);
     const classified=detectDocumentKind(txt);
-    if(classified.kind==="attendance"){
-      if(tc){
-        const v=attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]);
-        if(v)sums.push(v);
+    const monthly=tc?attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]):null;
+    if(monthly)sums.push(monthly);
+    if(monthly||classified.kind==="attendance"){
+      // Exact numeric crop is reliable for the confirmed municipal report
+      // template. Other layouts require a manually confirmed month.
+      if(monthly){
+        try{const workMonth=await attendancePdfMonth(pg);if(workMonth)months.push(workMonth)}
+        catch(err){console.warn("Attendance month header unreadable",err?.message)}
       }
-      try{const month=await attendancePdfMonth(pg);if(month)months.push(month)}
-      catch(err){console.warn("Attendance month unreadable",err?.message)}
     }
     out.push(txt);
   }
