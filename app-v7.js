@@ -1,4 +1,5 @@
 const $=id=>document.getElementById(id);
+import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex} from "./payroll-trends.mjs";
 const S={pay:[],att:[],docs:[],issues:[],report:"",insufficient:false};
 
 const pdfjs=window.pdfjsLib;
@@ -904,9 +905,69 @@ function renderPayrollGuard(pays){
   }
 
 
-  el.innerHTML='<article class="month"><div class="month-head"><div><div class="month-name">Payroll Guard — 8 בדיקות</div><div class="small">נבדקו '+docs.length+' תלושי שכר שנקראו וזוהו לפי חודש.</div></div><span class="badge '+(alerts?"warn":"ok")+'">'+(alerts?alerts+" התראות לבדיקה":"ללא חריגה בולטת")+'</span></div>'+
+  // 9. Cross-slip VARIABLE component surveillance, independent of attendance.
+  // A recurring component can be absent for legitimate leave / roster reasons.
+  // Never announce missing wages without matching entitlement and retro periods.
+  {
+    const uniqueMonthCount=new Set(docs.map(d=>d.month)).size;
+    const findings=detectVariablePayTrends(docs.map(d=>({
+      month:d.month,components:d.variableComponents||{}
+    })));
+    const items=[];
+    for(const f of findings){
+      const source=f.historyMonths.join(" ו־");
+      const typical=f.typicalQuantity!=null?
+        " (כמות אופיינית ברכיב: "+fmt(f.typicalQuantity)+")":"";
+      const msg=f.kind==="missing"?
+        f.month+": רכיב „"+f.label+"” הופיע בתלושי "+source+
+          " ואינו מופיע בתלוש הנוכחי"+typical+".":
+        f.month+": רכיב „"+f.label+"” ירד מכמות "+fmt(f.typicalQuantity)+
+          " לכמות "+fmt(f.currentQuantity)+" לעומת התלושים הקודמים.";
+      const caution=" יש לבדוק זכאות בפועל, חופשה, שינוי שיבוץ ותשלומים מתקנים"+
+        " בחודשים סמוכים. כמות כוננות בתלוש אינה בהכרח מספר כוננויות.";
+      items.push(msg+caution);
+      addGuardIssue(f.month,msg+caution);
+      alerts++;
+    }
+    push("9. רכיבים משתנים שנעלמו או ירדו",items,
+      "השוואת תלוש מול תלוש גם בלי דוח נוכחות. דורשת היסטוריה אמינה "+
+      "של רכיב מזוהה בשני חודשים לפחות; חוסר קריאת OCR אינו נחשב אי־תשלום.",
+      !findings.length?
+        (uniqueMonthCount<3?"נדרשים שלושה תלושים מזוהים לפחות כדי ליצור קו בסיס.":
+         "לא זוהה דפוס חסר מאומת. לא ניתן לשלול רכיבים שהסריקה לא פענחה."):"");
+  }
+
+
+  el.innerHTML='<article class="month"><div class="month-head"><div><div class="month-name">Payroll Guard — 9 בדיקות</div><div class="small">נבדקו '+docs.length+' תלושי שכר שנקראו וזוהו לפי חודש.</div></div><span class="badge '+(alerts?"warn":"ok")+'">'+(alerts?alerts+" התראות לבדיקה":"ללא חריגה בולטת")+'</span></div>'+
     '<div class="guard-grid">'+sections.join("")+'</div></article>';
   return {alerts};
+}
+
+
+function variablePayEvidence(lines,parsedPayslip){
+  const fullPdfRows=lines.some(l=>l.includes(" || "));
+  const independentCodes=OT.filter(o=>parsedPayslip.payEvidence?.[o.k]==="exact-code-row").length;
+  const sufficientlyRead=fullPdfRows&&(Boolean(parsedPayslip.guard?.summary)||independentCodes>=2);
+  const matchLabels={
+    oncall:/כוננ/,premium:/פרמיה/,mileage:/ק.{0,3}מ.{0,5}משתנ/,
+    mealShift:/כלכלה.{0,5}מש/,mealAllowance:/דמי.{0,5}כלכלה/
+  };
+  const out={};
+  for(const def of VARIABLE_PAY_COMPONENTS){
+    const exact=new RegExp("(^|[^0-9])"+def.code+"([^0-9]|$)");
+    const line=lines.find(l=>exact.test(l)&&matchLabels[def.id]?.test(l));
+    // Positive proof needs the code, label and numeric fields on the same row.
+    // No row only means zero when a full digitally-read payslip has other
+    // independent payroll evidence. OCR omissions are NEVER treated as zero.
+    const nums=line?lineNums(line).filter(n=>n!==Number(def.code)):[];
+    const positive=Boolean(line&&nums.some(n=>n>0)&&nums.length>=2);
+    const reliableQuantity=def.id==="oncall"&&parsedPayslip.oncallEvidence==="exact-code-row";
+    out[def.id]=positive?{
+      state:"paid",quantity:reliableQuantity&&Number.isFinite(parsedPayslip.oncall)?parsedPayslip.oncall:null
+    }:line?{state:"unknown",quantity:null}:
+      sufficientlyRead?{state:"absent",quantity:0}:{state:"unknown",quantity:null};
+  }
+  return out;
 }
 
 function parse(kind,text,file){
@@ -933,7 +994,7 @@ function parse(kind,text,file){
       if(oi>=0)on=metricFromNums(lineNums(lines.slice(Math.max(0,oi-2),Math.min(lines.length,oi+3)).join(" ")),explicitRate,1,[4392]);
     }
     if(on){
-      d.oncall=on.q;d.tariffs.oncall=on.tariff;
+      d.oncall=on.q;d.oncallEvidence=on.source||"inferred";d.tariffs.oncall=on.tariff;
       if(Number.isFinite(on.base))inferredRates.push(on.base);
     }
     d.payrollCodesVerified=OT.every(o=>d.payEvidence[o.k]==='exact-code-row');
@@ -945,6 +1006,7 @@ function parse(kind,text,file){
     d.taxGrossYtd=taxLabeledAmount(lines,/ברוטו\s*למס\s*הכנסה/,{min:100,max:5000000,pick:"max"});
     d.guard=extractPayrollGuard(clean,lines);
     d.incomeTaxPeriod=incomeTaxFromSlip(lines,d.guard,d.month);
+    d.variableComponents=variablePayEvidence(lines,d);
   }else{
     const m=clean.match(/@@ATT_PDF_META (\{[^\n]*\}) @@/);
     if(m){
@@ -1233,7 +1295,8 @@ function render(){
   if(guardAudit.alerts)warn+=guardAudit.alerts;
   const taxAudit=renderTaxAnalysis(pays);
   if(taxAudit.alerts)warn+=taxAudit.alerts;
-  S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n");
+  S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n")+
+    (S.issues.length?"\n\nנקודות לבדיקה:\n"+S.issues.map(x=>x.month+": "+x.text).join("\n"):"");
   const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים שדורשים בדיקה נוספת."}else if(S.insufficient){o.className="overall warn";o.textContent=unresolved.length||undatedAttendance.length?
     "יש "+(unresolved.length+undatedAttendance.length)+" מסמכים שהסוג או חודש העבודה שלהם לא אומת. בדוק פירוט וזיהוי ידני.":
     "הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
