@@ -15,7 +15,7 @@
   <div>
     <div class="eyebrow">PAYCHECK AUDIT • V11 PAYROLL GUARD</div>
     <h1>בדיקת התלוש שלי</h1>
-    <p>מעלים תלוש שכר ודוח נוכחות. האפליקציה קוראת את נתוני השכר מתוך התלוש, משווה לנוכחות ומכינה פנייה מסודרת במקרה של פער.</p>
+    <p>אפשר להעלות את כל התלושים ודוחות הנוכחות בכל סדר ובכל אחד מאזורי ההעלאה. המערכת מזהה כל מסמך לפי התוכן, ומצרפת דוח נוכחות לתלוש של החודש הבא.</p>
   </div>
   <span class="privacy">🔒 עיבוד מקומי</span>
 </header>
@@ -28,14 +28,14 @@
       <div><b>2</b><span>מעלים דוח/ות נוכחות</span></div>
       <div><b>3</b><span>מקבלים פערים ופנייה מוכנה</span></div>
     </div>
-    <p class="small">אין צורך להזין תנאי העסקה ידנית. המנוע תומך גם ב־PDF וגם בצילומי מסך, מבצע OCR רב־שלבי ומחלק תמונות צפופות לאזורי קריאה לפני ההשוואה. דוח נוכחות של חודש M משויך כברירת מחדל לתלוש M+1.</p>
+    <p class="small">העלאה חופשית: אפשר לשים את כל הקבצים באזור העלאה אחד. המערכת ממיינת אוטומטית לפי התוכן והחודש, כולל PDF וצילומי מסך. מסמך לא מזוהה מועבר לאימות ידני ולא ייצור התראת חוסר שגויה.</p>
   </section>
 
   <section class="upload-grid">
     <article class="card">
       <div class="type-tag">תלושי שכר</div>
       <h2>📄 שכר</h2>
-      <p>PDF או צילום. אפשר להעלות כמה חודשים יחד.</p>
+      <p>PDF או צילום. אפשר להעלות כאן גם דוחות נוכחות — הזיהוי אוטומטי.</p>
       <label class="drop">
         <input id="payFiles" type="file" accept="application/pdf,image/*" multiple>
         <strong>הוסף תלושים</strong>
@@ -47,7 +47,7 @@
     <article class="card">
       <div class="type-tag">כניסה / יציאה</div>
       <h2>🕒 נוכחות</h2>
-      <p>PDF או צילום. אפשר להעלות כמה חודשים יחד.</p>
+      <p>PDF או צילום. אפשר להעלות כאן גם תלושי שכר — הזיהוי אוטומטי.</p>
       <label class="drop">
         <input id="attFiles" type="file" accept="application/pdf,image/*" multiple>
         <strong>הוסף דוחות נוכחות</strong>
@@ -88,6 +88,7 @@
         <button id="requestBtn" class="primary compact">הכן פנייה למחלקת שכר</button>
       </div>
     </div>
+    <div id="typeSummary"></div>
     <div id="overall" class="overall"></div>
     <div id="payrollGuard"></div>
     <div id="taxAnalysis"></div>
@@ -117,6 +118,6 @@
     <span>התוצאה היא כלי עזר לאיתור פערים אפשריים, לא קביעה משפטית או חשבונאית. ההשוואה נעשית לפי רכיבי 125% / 150% / 175% / 200% ובחיבור חודש העבודה לתלוש העוקב; חריגות מסומנות לבדיקה ולא נקבעות אוטומטית כטעות.</span>
   </section>
 </main>
-<script type="module" src="app-v7.js?v=16"></script>
+<script type="module" src="app-v7.js?v=17"></script>
 </body>
 </html>
