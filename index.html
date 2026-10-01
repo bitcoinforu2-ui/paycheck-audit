@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
   <title>בדיקת שכר חכמה</title>
-  <link rel="stylesheet" href="styles.css?v=9">
+  <link rel="stylesheet" href="styles.css?v=10">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -113,11 +113,39 @@
     </details>
   </section>
 
+  <section id="pilotPanel" class="card hidden">
+    <div class="section-head"><div>
+      <h2>שיתוף ממצאים אנונימיים — פיילוט בלבד</h2>
+      <p class="small">רשות בלבד: שיתוף קטגוריות של רכיבי שכר חסרים, פערי שעות ובעיות קריאה.
+      לא נשלחים תלושים, דוחות נוכחות, שמות, מספרי זהות, פרטי חשבון, סכומי משכורת,
+      שמות קבצים או טקסט מהמסמכים. הנתונים נשמרים עד 90 יום במאגר נפרד.
+      רק מנהל הפיילוט המורשה רשאי לראות סטטיסטיקות מצטברות.</p>
+      <p class="small">ניתן להמשיך להשתמש בבדיקה בלי לשתף נתונים. במכשיר משותף יש לאפס מזהה
+      לפני שעובד אחר שולח ממצאים. סיווגי המנוע הם חשדות לבדיקה ולא קביעה על אי־תשלום.</p>
+    </div></div>
+    <label class="pilot-consent"><input id="pilotConsent" type="checkbox">
+      אני מסכים/ה לשיתוף קטגוריות הממצאים המתוארות לעיל לצורכי שיפור המנוע וניתוח
+      דפוסים משותפים, ללא המסמכים המקוריים.
+    </label>
+    <div id="pilotCaptcha"></div>
+    <div class="pilot-actions">
+      <button id="pilotSend" class="primary compact" disabled>שתף ממצאים בלבד</button>
+      <button id="pilotResetId" class="secondary compact" type="button">מכשיר משותף — אפס מזהה</button>
+    </div>
+    <p id="pilotStatus" role="status" class="small" aria-live="polite"></p>
+    <details><summary>בקשות מחיקה שמורות במכשיר זה</summary>
+      <div id="pilotReceipts"></div>
+      <p class="small">מזהי מחיקה נשמרים רק בדפדפן זה. אם מנקים את נתוני הדפדפן
+      לא ניתן לשחזר מהם את מזהי המחיקה. בכל מקרה הנתונים נמחקים מהשרת עד 90 יום.</p>
+    </details>
+  </section>
+
   <section class="card disclaimer">
     <b>חשוב:</b>
     <span>התוצאה היא כלי עזר לאיתור פערים אפשריים, לא קביעה משפטית או חשבונאית. המערכת בודקת גם רכיבים משתנים בין תלושים וגם שעות 125% / 150% / 175% / 200% בחיבור חודש העבודה לתלוש העוקב; רכיב שנעלם עשוי להיות מוסבר בחופשה, שינוי שיבוץ או תשלום מאוחר, ולכן מסומן לבירור ולא נקבע אוטומטית כחוסר שכר.</span>
   </section>
 </main>
-<script type="module" src="app-v7.js?v=25"></script>
+<script type="module" src="app-v7.js?v=26"></script>
+<script type="module" src="pilot-ui.mjs?v=1"></script>
 </body>
 </html>
