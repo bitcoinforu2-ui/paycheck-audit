@@ -1452,9 +1452,18 @@ $("historyImport").onchange=async e=>{
         verifiedAttendanceSummary:true,monthSource:"user-imported",
         monthCandidates:[],variableComponents:{}});
     }
-    S.imported=data;
-    const keys=new Set(S.docs.map(d=>d.kind+":"+d.month));
-    S.docs=[...S.docs,...data.filter(d=>!keys.has(d.kind+":"+d.month))];
+    // Multiple privately generated history packs may be imported in batches.
+    const imported=new Map(S.imported.map(d=>[d.kind+":"+d.month,d]));
+    for(const d of data)imported.set(d.kind+":"+d.month,d);
+    S.imported=[...imported.values()];
+    const current=new Map(S.docs.map(d=>[d.kind+":"+d.month,d]));
+    for(const d of data){
+      const key=d.kind+":"+d.month,existing=current.get(key);
+      // Never replace a freshly read PDF with a lower-provenance JSON record.
+      if(!existing||String(existing.fileName||"").startsWith("ייבוא פרטי"))
+        current.set(key,d);
+    }
+    S.docs=[...current.values()];
     note.textContent="נקלטו "+data.filter(d=>d.kind==="payslip").length+
       " תלושים ו־"+data.filter(d=>d.kind==="attendance").length+" דוחות. ייבוא מקומי בלבד.";
     note.style.color="#77e7c9";
