@@ -1350,6 +1350,26 @@ function render(){
       '<div class="small">סיכום שעות PDF: '+(d.verifiedAttendanceSummary?'זוהה':'לא אומת — לא ניתן לקבוע פער כספי')+'</div></div>';
   }).join("");
   $("reviewSection").classList.remove("hidden");
+  // Broadcast ONLY allowlisted diagnostic categories after a completed audit.
+  // Raw documents, filenames, original OCR and salary amounts stay in memory.
+  if(typeof window.dispatchEvent==="function"&&typeof CustomEvent==="function"){
+    const latest=pays.filter(d=>/^(0[1-9]|1[0-2])\\/20\\d{2}$/.test(d.month||""))
+      .sort((a,b)=>monthKey(b.month)-monthKey(a.month))[0];
+    if(latest)window.dispatchEvent(new CustomEvent("paycheck:analysis-ready",{
+      detail:{
+        month:latest.month,
+        findings:(S.variableFindings||[]).map(f=>({id:f.id,kind:f.kind})),
+        hourlyDifferences:ps.filter(pair=>pair.a&&pair.p&&
+          pair.a.verifiedAttendanceSummary&&pair.p.payrollCodesVerified)
+          .map(pair=>assessHourDifferences(pair.a,pair.p).diffs.map(d=>({
+            k:d.k,minutes:d.minutes}))),
+        unknown:S.docs.filter(d=>d.kind==="unknown"||
+          (d.kind==="attendance"&&!d.verifiedAttendanceSummary)||
+          (d.kind==="payslip"&&!d.guard?.summary)).length,
+        unpaired:ps.filter(pair=>!pair.a||!pair.p).length
+      }
+    }));
+  }
 }
 function request(){
   if(!S.issues.length&&S.questions.length){
@@ -1374,6 +1394,9 @@ function mergeFiles(current,incoming){
 function resetVisibleResults(){
   ["autoProfileSection","resultsSection","requestSection","reviewSection"].forEach(id=>$(id)?.classList.add("hidden"));
   $("progressWrap")?.classList.add("hidden");
+  $("pilotPanel")?.classList.add("hidden");
+  if(typeof window.dispatchEvent==="function"&&typeof CustomEvent==="function")
+    window.dispatchEvent(new CustomEvent("paycheck:analysis-cleared"));
 }
 function renderSelectedFiles(){
   const chips=(files,kind)=>files.map((f,i)=>
