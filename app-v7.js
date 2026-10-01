@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex} from "./payroll-trends.mjs";
+import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
 const S={pay:[],att:[],docs:[],issues:[],report:"",insufficient:false};
 
 const pdfjs=window.pdfjsLib;
@@ -754,7 +754,8 @@ function renderPayrollGuard(pays){
         }
       }
     }
-    push("1. רציפות רכיבי שכר",issues,"מחפש רכיב שמופיע בקביעות ואז נעלם.");
+    push("1. רציפות רכיבי שכר",issues,"מחפש רכיב שמופיע בקביעות ואז נעלם.",
+      docs.length<4?"דרושים ארבעה תלושים מזוהים לפחות לבדיקת רציפות רכיבי שכר קבועים; שלושה חודשים אינם מספיקים כדי לאשר שאין חריגה.":"");
   }
 
   // 2. Vacation / sickness arithmetic and continuity.
@@ -1007,6 +1008,22 @@ function parse(kind,text,file){
     d.taxGrossYtd=taxLabeledAmount(lines,/ברוטו\s*למס\s*הכנסה/,{min:100,max:5000000,pick:"max"});
     d.guard=extractPayrollGuard(clean,lines);
     d.incomeTaxPeriod=incomeTaxFromSlip(lines,d.guard,d.month);
+    // A missing row can mean a printed zero, but only for a complete PDF
+    // with all three OTHER overtime rates independently code-verified and
+    // a reconciled payslip summary. Never assume OCR failures mean zero.
+    for(const o of OT){
+      if(Number.isFinite(d[o.k]))continue;
+      if(inferAbsentOvertimeZero({
+        digitalPdfRows:lines.some(l=>l.includes(" || ")),
+        reconciledSummary:Boolean(d.guard?.summary),
+        verifiedOtherRateCodes:OT.filter(other=>other.k!==o.k&&d.payEvidence[other.k]==="exact-code-row").length,
+        targetCodePresent:Boolean(findCodeRow(lines,o.code))
+      })){
+        d[o.k]=0;
+        d.payEvidence[o.k]="verified-zero-by-absence";
+      }
+    }
+    d.payrollCodesVerified=OT.every(o=>["exact-code-row","verified-zero-by-absence"].includes(d.payEvidence[o.k]));
     d.variableComponents=variablePayEvidence(lines,d);
   }else{
     const m=clean.match(/@@ATT_PDF_META (\{[^\n]*\}) @@/);
@@ -1285,6 +1302,9 @@ function render(){
         else if(pc===0)flags.push(["warn","התלוש זוהה, אבל רכיבי השעות שבו לא נקראו. מומלץ להעלות PDF מקורי ולא צילום מסך."]);
         else flags.push(["warn","אין כרגע רכיב שעות משותף שנקרא משני המסמכים."]);
       }
+      const verifiedZeros=OT.filter(o=>p.payEvidence?.[o.k]==="verified-zero-by-absence");
+      if(verifiedZeros.length)flags.push(["info",verifiedZeros.map(o=>o.label).join(", ")+
+        ": שורת השכר אינה מופיעה ב־PDF; הערך הוסק כאפס לפי סיכום שכר מאומת ושלוש שורות שעות נוספות אחרות שנקראו במפורש."]);
       if(Number.isFinite(p.oncall))flags.push(["info","כוננות חול בתלוש: "+fmt(p.oncall)+" שעות/כמות לחישוב שכר. זה אינו מספר הכוננויות."]);
       // No monetary estimates before a verified adjustment ledger is available.
     }
