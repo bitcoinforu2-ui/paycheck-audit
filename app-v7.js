@@ -913,6 +913,7 @@ function renderPayrollGuard(pays){
     const findings=detectVariablePayTrends(docs.map(d=>({
       month:d.month,components:d.variableComponents||{}
     })));
+    S.variableFindings=findings;
     const items=[];
     for(const f of findings){
       const source=f.historyMonths.join(" ו־");
@@ -1169,7 +1170,7 @@ function monthKey(mm){
   return y*12+m;
 }
 function render(){
-  S.issues=[];S.questions=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
+  S.issues=[];S.questions=[];S.variableFindings=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
   const unresolved=S.docs.filter(d=>d.kind==="unknown");
   const undatedAttendance=S.docs.filter(d=>d.kind==="attendance"&&d.month==="לא זוהה");
   if(unresolved.length||undatedAttendance.length)S.insufficient=true;
@@ -1187,7 +1188,9 @@ function render(){
   if(typeSummary)typeSummary.innerHTML='<div class="flag info">זוהו לפי התוכן: '+
     pays.length+' תלושי שכר, '+S.docs.filter(d=>d.kind==="attendance").length+
     ' דוחות נוכחות'+(unresolved.length?' · '+unresolved.length+
-    ' מסמכים שלא זוהו':'')+'. התאמת חודשים: דוח M ← תלוש M+1.</div>'+
+    ' מסמכים שלא זוהו':'')+'. חודשי תלוש מזוהים: '+new Set(pays.filter(d=>d.month!=="לא זוהה").map(d=>d.month)).size+
+    ' · חודשי נוכחות מזוהים: '+new Set(S.docs.filter(d=>d.kind==="attendance"&&d.month!=="לא זוהה").map(d=>d.month)).size+
+    '. ניתן להעלות גם 12 חודשים. המערכת בודקת גם תלוש מול תלוש ללא דוחות נוכחות; הצלבת שעות: דוח M ← תלוש M+1.</div>'+
     '<details><summary>בדוק אילו קבצים וחודשים זוהו</summary>'+
     S.docs.map(d=>{
       const source=d.kind!=="attendance"?"":d.monthSource==="visual+calendar"?
@@ -1297,7 +1300,7 @@ function render(){
   if(taxAudit.alerts)warn+=taxAudit.alerts;
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n")+
     (S.issues.length?"\n\nנקודות לבדיקה:\n"+S.issues.map(x=>x.month+": "+x.text).join("\n"):"");
-  const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים שדורשים בדיקה נוספת."}else if(S.insufficient){o.className="overall warn";o.textContent=unresolved.length||undatedAttendance.length?
+  const o=$("overall");if(S.variableFindings?.length){o.className="overall warn";o.textContent="אותרו רכיבי שכר משתנים שדורשים בירור בין תלושים. ייתכן שחלק מההצלבה מול נוכחות טרם אומת."}else if(bad){o.className="overall bad";o.textContent="נמצאו פערים שדורשים בדיקה נוספת."}else if(S.insufficient){o.className="overall warn";o.textContent=unresolved.length||undatedAttendance.length?
     "יש "+(unresolved.length+undatedAttendance.length)+" מסמכים שהסוג או חודש העבודה שלהם לא אומת. בדוק פירוט וזיהוי ידני.":
     "הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
   $("resultsSection").classList.remove("hidden");
