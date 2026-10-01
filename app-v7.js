@@ -845,50 +845,30 @@ function parse(kind,text,file){
   return d;
 }
 function pairs(){
-  const a=S.docs.filter(d=>d.kind==="attendance"),p=S.docs.filter(d=>d.kind==="payslip");
-
-  // Payroll pattern validated on the supplied municipal samples:
-  // work/attendance month M is normally paid in payslip M+1.
-  // Do NOT apply an assumed 24/25 cutoff; compare the full attendance month.
-  if(a.length===1&&p.length===1){
-    const lag=a[0].month!=="לא זוהה"&&p[0].month===shift(a[0].month,1);
-    const same=a[0].month!=="לא זוהה"&&p[0].month===a[0].month;
-    const fallback=a[0].month==="לא זוהה"||p[0].month==="לא זוהה"||(!lag&&!same);
-    return [{a:a[0],p:p[0],fallback,lag,same}];
+  const att=S.docs.filter(d=>d.kind==="attendance");
+  const pay=S.docs.filter(d=>d.kind==="payslip");
+  const byPayMonth=new Map(),attCount=new Map(),used=new Set(),out=[];
+  for(const p of pay)if(p.month!=="לא זוהה"){
+    if(!byPayMonth.has(p.month))byPayMonth.set(p.month,[]);
+    byPayMonth.get(p.month).push(p);
   }
-
-  const out=[],used=new Set();
-  a.forEach((ad,ai)=>{
-    let best=null,score=-1;
-    p.forEach((pd,pi)=>{
-      if(used.has(pi))return;
-      let scoreHere=0;
-      if(ad.month!=="לא זוהה"&&pd.month===shift(ad.month,1))scoreHere=140;
-      else if(ad.month!=="לא זוהה"&&pd.month===ad.month)scoreHere=80;
-      if(scoreHere>score){score=scoreHere;best={pd,pi}}
-    });
-    if(best&&score>0){
-      used.add(best.pi);
-      out.push({
-        a:ad,p:best.pd,
-        fallback:false,
-        lag:best.pd.month===shift(ad.month,1),
-        same:best.pd.month===ad.month
-      });
-    }else out.push({a:ad,p:null,fallback:false,lag:false,same:false});
-  });
-
-  p.forEach((pd,pi)=>{if(!used.has(pi))out.push({a:null,p:pd,fallback:false,lag:false,same:false})});
-
-  // If OCR missed month labels but counts match, pair by upload order and mark it clearly.
-  if(out.some(x=>!x.a||!x.p)&&a.length===p.length){
-    const anyUnknown=a.some(x=>x.month==="לא זוהה")||p.some(x=>x.month==="לא זוהה");
-    if(anyUnknown)return a.map((ad,i)=>({
-      a:ad,p:p[i],fallback:true,
-      lag:ad.month!=="לא זוהה"&&p[i].month===shift(ad.month,1),
-      same:ad.month!=="לא זוהה"&&p[i].month===ad.month
-    }));
+  for(const a of att)if(a.month!=="לא זוהה")
+    attCount.set(a.month,(attCount.get(a.month)||0)+1);
+  for(const a of att){
+    const expected=a.month!=="לא זוהה"?shift(a.month,1):null;
+    const matches=expected?byPayMonth.get(expected)||[]:[];
+    const unique=expected&&attCount.get(a.month)===1&&matches.length===1&&!used.has(matches[0]);
+    if(unique){
+      const p=matches[0];used.add(p);
+      out.push({a,p,fallback:false,lag:true,same:false});
+    }else{
+      // Unknown months, same-month slips, duplicate files and other mismatches
+      // MUST NOT be paired by upload order. Do not generate monetary findings.
+      out.push({a,p:null,fallback:false,lag:false,same:false});
+    }
   }
+  for(const p of pay)if(!used.has(p))
+    out.push({a:null,p,fallback:false,lag:false,same:false});
   return out;
 }
 function rows(d){
@@ -951,14 +931,14 @@ function render(){
   $("autoProfileSection").classList.remove("hidden");
 
   $("monthResults").innerHTML=ps.map(({a,p,fallback,lag,same})=>{
-    const m=a?.month!=="לא זוהה"?a?.month:p?.month||"לא זוהה",flags=[];
+    const m=a&&a.month!=="לא זוהה"?a.month:(p?.month||"לא זוהה"),flags=[];
     let cls="warn",title="דורש בדיקה",gap=null;
-    if(!a){warn++;S.insufficient=true;title="חסר דוח נוכחות";flags.push(["warn","לא נמצא דוח נוכחות מתאים לתלוש."])}
-    else if(!p){warn++;S.insufficient=true;title="חסר תלוש";flags.push(["warn","לא נמצא תלוש מתאים לדוח הנוכחות."])}
+    if(!a){warn++;S.insufficient=true;title="אין דוח משויך";flags.push(["info","לתלוש "+(p?.month||"לא זוהה")+" נדרש דוח נוכחות של "+(p?.month!=="לא זוהה"?shift(p.month,-1):"החודש הקודם")+". אם הדוח הועלה, יש לוודא שחודש העבודה נקרא נכון; לא נוצר פער כספי."])}
+    else if(!p){warn++;S.insufficient=true;title="אין תלוש משויך";flags.push(["info",a.month==="לא זוהה"?"לא זוהה חודש העבודה בדוח. יש לבחור את חודש העבודה בבדיקת נתונים ידנית.":"דוח "+a.month+" מחייב תלוש "+shift(a.month,1)+". לא נמצא תלוש מאומת מתאים; לא נוצר פער כספי."])}
     else{
       if(fallback)flags.push(["info","שיוך לפי סדר העלאה אינו מאומת ואינו בסיס למסקנה כספית."]);
       if(lag)flags.push(["info","שיוך חודש: דוח הנוכחות של חודש העבודה הותאם לתלוש של החודש הבא (M→M+1), בהתאם לדפוס שאומת בתלושים שנבדקו. ההשוואה כוללת את כל חודש הנוכחות — ללא חיתוך אוטומטי ב־24/25."]);
-      if(same)flags.push(["warn","נמצא תלוש מאותו חודש, אך בדוגמאות שאומתו דוח חודש העבודה משולם בדרך כלל בתלוש של החודש הבא. מומלץ לצרף גם את תלוש M+1."]);
+      // Same-month payslips are never paired; matching must be M -> M+1.
       const ac=readCount(a),pc=readCount(p);
       const common=OT.filter(o=>Number.isFinite(a?.[o.k])&&Number.isFinite(p?.[o.k]));
       const complete=ac===OT.length&&pc===OT.length;
@@ -1030,7 +1010,19 @@ function render(){
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n");
   const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים משמעותיים לבדיקה."}else if(S.insufficient){o.className="overall warn";o.textContent="הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
   $("resultsSection").classList.remove("hidden");
-  $("reviewRows").innerHTML=S.docs.map((d,i)=>'<div class="review-doc"><b>'+(d.kind==="payslip"?"📄 תלוש":"🕒 נוכחות")+' · '+esc(d.month)+' · '+esc(d.fileName)+'</b></div>').join("");
+  $("reviewRows").innerHTML=S.docs.map((d,i)=>{
+    if(d.kind!=="attendance")return '<div class="review-doc"><b>📄 תלוש · '+esc(d.month)+' · '+esc(d.fileName)+'</b></div>';
+    const options=[...new Set([
+      d.month,
+      ...S.docs.filter(x=>x.kind==="payslip"&&x.month!=="לא זוהה").map(x=>shift(x.month,-1))
+    ].filter(mm=>mm&&mm!=="לא זוהה"))].sort((x,y)=>monthKey(x)-monthKey(y));
+    const opts='<option value="">בחר חודש עבודה</option>'+options.map(mm=>
+      '<option value="'+esc(mm)+'"'+(mm===d.month?' selected':'')+'>'+esc(mm)+'</option>').join("");
+    return '<div class="review-doc"><b>🕒 נוכחות · '+esc(d.fileName)+'</b>'+
+      '<div class="small">חודש הדוח חייב להיות חודש אחד לפני תלוש השכר. תאריך הפקת PDF אינו חודש העבודה.</div>'+
+      '<label>חודש העבודה <select data-attendance-month="'+i+'">'+opts+'</select></label>'+
+      '<div class="small">סיכום שעות PDF: '+(d.verifiedAttendanceSummary?'זוהה':'לא אומת — לא ניתן לקבוע פער כספי')+'</div></div>';
+  }).join("");
   $("reviewSection").classList.remove("hidden");
 }
 function request(){
@@ -1091,7 +1083,20 @@ $("attFiles").onchange=e=>{
 $("requestBtn").onclick=()=>{$("requestText").value=request();$("requestSection").classList.remove("hidden");$("requestSection").scrollIntoView({behavior:"smooth"})};
 $("copyRequestBtn").onclick=async()=>{try{await navigator.clipboard.writeText($("requestText").value);$("copyRequestBtn").textContent="הועתק ✓"}catch{}};
 $("copyBtn").onclick=async()=>{try{await navigator.clipboard.writeText(S.report);$("copyBtn").textContent="הועתק ✓"}catch{}};
-$("recalcBtn").onclick=()=>render();
+$("recalcBtn").onclick=()=>{
+  for(const field of document.querySelectorAll("[data-attendance-month]")){
+    const doc=S.docs[Number(field.dataset.attendanceMonth)];
+    if(!doc||doc.kind!=="attendance")continue;
+    const next=String(field.value||"");
+    if(/^(0[1-9]|1[0-2])\/20\d{2}$/.test(next)){
+      doc.month=next;
+      // Month is user-confirmed, not extrapolated from PDF generation date.
+      doc.workMonthConfirmed=true;
+      if(doc.verifiedAttendanceSummary)doc.confidence=96;
+    }
+  }
+  render();
+};
 
 $("analyzeBtn").onclick=async()=>{
   if(!S.pay.length||!S.att.length){alert("צריך לפחות תלוש אחד ודוח נוכחות אחד.");return}
