@@ -79,10 +79,16 @@ window.addEventListener("paycheck:analysis-ready",event=>{
       unknown:d.unknown,unpaired:d.unpaired
     })};
   sentCurrent=false;captchaToken="";
+  el("pilotConsent").checked=false;
   if(widgetId!==null&&window.turnstile)window.turnstile.reset(widgetId);
   el("pilotPanel").classList.remove("hidden");
   if(!configured)status("איסוף הנתונים טרם הופעל על ידי מנהל הפיילוט. הבדיקות עצמן נשארות במכשיר.");
   else status("הניתוח הושלם. ניתן לשתף רק את קטגוריות הממצאים, בהסכמתך.");
+  updateButton();
+});
+window.addEventListener("paycheck:analysis-cleared",()=>{
+  current=null;captchaToken="";sentCurrent=false;
+  el("pilotConsent").checked=false;el("pilotPanel").classList.add("hidden");
   updateButton();
 });
 el("pilotConsent").onchange=async()=>{
