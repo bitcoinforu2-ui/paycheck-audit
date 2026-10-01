@@ -961,6 +961,28 @@ function estimate(a,p){
   }
   return ok?sum:null;
 }
+// Reconcile hours before attempting any monetary conclusion.
+function assessHourDifferences(a,p){
+  const diffs=OT.map(o=>({k:o.k,label:o.label,minutes:
+    Number.isFinite(a?.[o.k])&&Number.isFinite(p?.[o.k])?
+    Math.round((a[o.k]-p[o.k])*60):null}));
+  if(diffs.some(d=>d.minutes===null))return {status:"incomplete",minutes:null,diffs};
+  const minutes=diffs.reduce((v,d)=>v+d.minutes,0);
+  const pos=diffs.some(d=>d.minutes>15),neg=diffs.some(d=>d.minutes< -15);
+  let status="unreconciled";
+  if(diffs.every(d=>Math.abs(d.minutes)<=1))status="exact";
+  else if(diffs.every(d=>Math.abs(d.minutes)<=15))status="near";
+  else if(pos&&neg)status="redistribution";
+  else if(minutes< -15&&!pos)status="payslip-higher";
+  else if(minutes>15&&!neg)status="attendance-higher";
+  return {status,minutes,diffs};
+}
+function hourDifferenceText(result){
+  if(result.minutes===null)return "לא ניתן לחשב";
+  if(result.minutes===0)return "סך השעות זהה";
+  return (result.minutes>0?"דוח הנוכחות גבוה ב־":"התלוש גבוה ב־")+
+    hh(Math.abs(result.minutes)/60)+" שעות";
+}
 function readCount(d){
   if(!d)return 0;
   return OT.reduce((n,o)=>n+(Number.isFinite(d[o.k])?1:0),0);
@@ -979,7 +1001,7 @@ function monthKey(mm){
   return y*12+m;
 }
 function render(){
-  S.issues=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
+  S.issues=[];S.questions=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
   const unresolved=S.docs.filter(d=>d.kind==="unknown");
   if(unresolved.length)S.insufficient=true;
   const pays=S.docs.filter(d=>d.kind==="payslip");
@@ -1010,8 +1032,8 @@ function render(){
       const ac=readCount(a),pc=readCount(p);
       const common=OT.filter(o=>Number.isFinite(a?.[o.k])&&Number.isFinite(p?.[o.k]));
       const complete=ac===OT.length&&pc===OT.length;
-      const ds=details(a,p);
-      gap=complete&&Number.isFinite(a.otTotal)&&Number.isFinite(p.otTotal)?a.otTotal-p.otTotal:null;
+      const ds=details(a,p),audit=assessHourDifferences(a,p);
+      gap=complete&&audit.minutes!==null?audit.minutes/60:null;
 
       if(!complete){
         S.insufficient=true;
@@ -1035,23 +1057,27 @@ function render(){
         }else{
           flags.push(["info","הבדיקה אינה מלאה; יש להשלים נתונים לפני מסקנה כספית."]);
         }
+      }else if(audit.status==="exact"){
+        good++;cls="ok";title="התאמת שעות";flags.push(["ok","ארבעת רכיבי השעות תואמים בטווח דקה לכל רכיב."]);
+      }else if(audit.status==="near"){
+        good++;cls="ok";title="התאמה קרובה";
+        flags.push(["info","יש סטיות של עד 15 דקות ברכיב: "+hourDifferenceText(audit)+". זו אינה התאמה חשבונאית מוחלטת."]);
       }else if(ds.length){
-        const big=ds.some(x=>x.type==="missing"||Math.abs(x.g)>1);
-        cls=big?"bad":"warn";title=big?"פער משמעותי לבדיקה":"פער קטן לבדיקה";big?bad++:warn++;
-        ds.forEach(x=>{
-          const level=(x.type==="missing"||Math.abs(x.g)>1)?"bad":"warn";
-          const msg=x.type==="missing"
-            ?x.label+": קיימות בדוח "+hh(x.g)+" שעות, אך לא זוהה רכיב מקביל בתלוש."
-            :x.label+": פער של "+hh(x.g)+" שעות "+(x.g>0?"לטובת דוח הנוכחות":"לטובת התלוש")+".";
-          flags.push([level,msg]);
-          if(x.type==="missing"||x.g>0){
-            S.issues.push({month:m,text:x.type==="missing"
-              ?x.label+": בדוח הנוכחות קיימות "+hh(x.g)+" שעות, אך לא זוהה תשלום מקביל בתלוש."
-              :x.label+": בדוח נקראו "+fmt(a[x.k])+" שעות ובתלוש "+fmt(p[x.k])+" שעות; חסרות לכאורה "+hh(x.g)+" שעות לבדיקה."});
-          }
-        });
-      }else if(complete&&gap!=null){
-        good++;cls="ok";title="התאמה טובה";flags.push(["ok","כל ארבעת רכיבי השעות שנקראו תואמים בקירוב."]);
+        warn++;cls="warn";title="פער שעות לתיאום";
+        flags.push(["info",hourDifferenceText(audit)+". זהו הבדל בכמויות השעות ולא הוכחה לחוסר שכר."]);
+        if(audit.status==="redistribution")
+          flags.push(["info","חלק מרכיבי השעות גבוהים בתלוש ואחרים בדוח. ייתכן שינוי סיווג בין רכיבים."]);
+        if(audit.status==="payslip-higher")
+          flags.push(["info","סך השעות בתלוש גבוה מסך השעות בדוח; לא נובע מכך שחסר תשלום."]);
+        if(audit.status==="attendance-higher")
+          flags.push(["info","סך השעות בדוח גבוה מסך השעות בתלוש. יש לאמת תשלומים בחודשים מאוחרים."]);
+        for(const x of ds)flags.push(["info",x.label+": דוח "+hh(a[x.k])+"; תלוש "+hh(p[x.k])+"."]);
+        const retros=pays.filter(x=>x.guard?.hasRetro&&monthKey(x.month)>=monthKey(p.month)&&
+          monthKey(x.month)<=monthKey(p.month)+2);
+        flags.push(["info",retros.length?
+          "זוהו סכומי הפרשים בתלושים סמוכים; יש לשייך אותם לחודש העבודה לפני מסקנה כספית.":
+          "תשלומים מתקנים ושיוכם לחודש העבודה עדיין לא אומתו."]);
+        S.questions.push({month:m,pay:p.month,text:hourDifferenceText(audit)+"; יש לאמת פירוט השעות ששולמו, תיקונים וקודי השכר."});
       }else if(common.length){
         warn++;title="השוואה חלקית";
         flags.push(["ok","ברכיבים המשותפים שנקראו משני המסמכים לא זוהה כרגע פער מעבר לסף. הבדיקה אינה מלאה."]);
@@ -1063,10 +1089,10 @@ function render(){
         else flags.push(["warn","אין כרגע רכיב שעות משותף שנקרא משני המסמכים."]);
       }
       if(Number.isFinite(p.oncall))flags.push(["info","כוננות חול בתלוש: "+fmt(p.oncall)+" שעות/כמות לחישוב שכר. זה אינו מספר הכוננויות."]);
-      const est=trustworthy?estimate(a,p):null;if(est)flags.push(["info","אומדן ראשוני בלבד לפני בדיקת תשלומים משלימים: כ־₪"+fmt(est)+"."]);
+      // No monetary estimates before a verified adjustment ledger is available.
     }
     return '<article class="month"><div class="month-head"><div><div class="month-name">חודש '+esc(m)+'</div><div class="small">תלוש משויך: '+esc(p?.month||"—")+'</div></div><span class="badge '+cls+'">'+title+'</span></div>'+
-      '<div class="metrics"><div class="metric"><div class="k">נוכחות — נוספות</div><div class="v">'+(a?.otTotal==null?"—":hh(a.otTotal))+'</div></div><div class="metric"><div class="k">תלוש — נוספות</div><div class="v">'+(p?.otTotal==null?"—":hh(p.otTotal))+'</div></div><div class="metric"><div class="k">פער כולל</div><div class="v">'+(gap==null?"—":hh(gap))+'</div></div><div class="metric"><div class="k">ביטחון קריאה</div><div class="v">'+(a&&p?Math.min(a.confidence,p.confidence)+"%":"—")+'</div></div></div>'+
+      '<div class="metrics"><div class="metric"><div class="k">נוכחות — נוספות</div><div class="v">'+(a?.otTotal==null?"—":hh(a.otTotal))+'</div></div><div class="metric"><div class="k">תלוש — נוספות</div><div class="v">'+(p?.otTotal==null?"—":hh(p.otTotal))+'</div></div><div class="metric"><div class="k">הפרש שעות (נוכחות פחות תלוש)</div><div class="v">'+(gap==null?"—":hh(gap))+'</div></div><div class="metric"><div class="k">ביטחון קריאה</div><div class="v">'+(a&&p?Math.min(a.confidence,p.confidence)+"%":"—")+'</div></div></div>'+
       '<div class="compare"><div class="side"><h3>🕒 נוכחות</h3>'+rows(a)+'</div><div class="side"><h3>📄 תלוש</h3>'+rows(p)+'</div></div>'+
       '<div class="flags">'+flags.map(([c,t])=>'<div class="flag '+c+'">'+esc(t)+'</div>').join("")+'</div></article>';
   }).join("");
@@ -1102,6 +1128,11 @@ function render(){
   $("reviewSection").classList.remove("hidden");
 }
 function request(){
+  if(!S.issues.length&&S.questions.length){
+    return "שלום,\n\nעלו הבדלים בכמויות שעות בין הדוח לתלוש, ללא מסקנה על חוסר בתשלום:\n\n"+
+      S.questions.map((x,i)=>(i+1)+". חודש עבודה "+x.month+" / תלוש "+x.pay+": "+x.text).join("\n")+
+      "\n\nאבקש את פירוט השעות ותיקוני השכר לפי חודש העבודה וקוד השכר.\n\nתודה.";
+  }
   if(!S.issues.length&&S.insufficient)return "שלום,\n\nניסיתי לבצע השוואה בין תלוש השכר לדוח הנוכחות, אך חלק מרכיבי השעות במסמכים לא נקראו בצורה שמאפשרת השוואה אמינה. אבקש בדיקה ידנית של הנתונים המצורפים.\n\nתודה.";
   if(!S.issues.length)return "שלום,\n\nביצעתי בדיקה של תלוש השכר מול דוח הנוכחות ולא נמצא כרגע פער ברור שניתן לנסח כפנייה. אבקש בדיקה כללית של הנתונים המצורפים.\n\nתודה.";
   return "שלום,\n\nבבדיקה בין דוח הנוכחות לתלוש השכר עלו הנקודות הבאות לבדיקה:\n\n"+S.issues.map((x,i)=>(i+1)+". חודש "+x.month+": "+x.text).join("\n")+"\n\nאבקש לבדוק מול מערכת הנוכחות ורכיבי השכר ולתקן במידת הצורך.\n\nתודה.";
