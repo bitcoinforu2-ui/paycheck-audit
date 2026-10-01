@@ -170,6 +170,9 @@ async function pdfText(file,base,span,kind){
     try{tc=await pg.getTextContent();txt=pdfRows(tc.items).join("\n")}catch{}
     // The caller's upload slot cannot determine the document type.
     // Probe geometry when selectable text identifies an attendance report.
+    // OCR a scanned PDF before document classification.
+    if(txt.replace(/\s+/g,"").length<40)
+      txt=await ocrPdfPage(pg,file.name,i,pb,ps);
     const classified=detectDocumentKind(txt);
     if(classified.kind==="attendance"){
       if(tc){
@@ -179,7 +182,6 @@ async function pdfText(file,base,span,kind){
       try{const month=await attendancePdfMonth(pg);if(month)months.push(month)}
       catch(err){console.warn("Attendance month unreadable",err?.message)}
     }
-    if(txt.replace(/\s+/g,"").length<40)txt=await ocrPdfPage(pg,file.name,i,pb,ps);
     out.push(txt);
   }
   if(sums.length||months.length){
