@@ -457,21 +457,27 @@ function leaveRow(lines,re){
   out.mathError=err;
   return err<3?out:null;
 }
+// Do not infer pension deductions from generic informational "pension"
+// rows, page headers or an accidental match of 1% / 2% somewhere nearby.
+// A rate needs an identifiable employee deduction row with all three values.
 function fundRow(lines,re){
+  const found=[];
   for(const line of lines){
-    if(!re.test(line))continue;
+    if(!re.test(line)||!/ניכוי/.test(line))continue;
     const xs=mirroredNums(line).filter(v=>v>0&&v<1000000);
-    if(xs.length<2)continue;
-    const gross=Math.max(...xs);
-    const pcts=xs.filter(v=>v>=.1&&v<=20);
-    for(const pct of pcts){
+    const bases=xs.filter(v=>v>=1000&&v<100000);
+    const pcts=xs.filter(v=>v>=5&&v<=9);
+    for(const gross of bases)for(const pct of pcts){
       const expected=gross*pct/100;
-      const amount=xs.filter(v=>v!==gross&&v!==pct).sort((a,b)=>Math.abs(a-expected)-Math.abs(b-expected))[0];
-      if(Number.isFinite(amount)&&Math.abs(amount-expected)<=Math.max(2,expected*.03))return {pct,gross,amount};
+      const matches=xs.filter(v=>v!==gross&&v!==pct&&v>=100&&Math.abs(v-expected)<=Math.max(1,expected*.005));
+      if(matches.length===1)found.push({pct,gross,amount:matches[0]});
     }
   }
-  return null;
+  // Ambiguity is an unreadable record, not a genuine change in rate.
+  if(found.length!==1)return null;
+  return found[0];
 }
+
 function recurrentComponents(lines){
   const defs=[
     ["יסוד",/(?:^|\s)יסוד(?:\s|$)/],
@@ -502,7 +508,7 @@ function extractPayrollGuard(clean,lines){
   const grossBL=codeTotal(lines,94010,{min:100,max:1000000});
   const ni=codeTotal(lines,91001,{min:0,max:50000});
   const health=codeTotal(lines,92041,{min:0,max:50000});
-  const pension=fundRow(lines,/פנסיה/);
+  const pension=fundRow(lines,/(?:פנסיה|הראל)/);
   const credits=labeledNumber(lines,/סך\s*נקודות\s*זיכוי/,{min:0,max:20,preferDecimal:true});
   const fraction=labeledNumber(lines,/חלקיות\s*ותק/,{min:.05,max:1.5,preferDecimal:true});
   return {
@@ -519,7 +525,7 @@ function extractPayrollGuard(clean,lines){
     creditPoints:credits,
     employmentFraction:fraction,
     components:recurrentComponents(lines),
-    hasRetro:Boolean(summary&&Math.abs(summary.differences)>.5)||/פירוט\s*הפרשים/.test(clean)
+    hasRetro:Boolean(summary&&Number.isFinite(summary.differences)&&Math.abs(summary.differences)>.5)
   };
 }
 function mad(values){
@@ -534,12 +540,14 @@ function renderPayrollGuard(pays){
   const docs=pays.filter(d=>d.month!=="לא זוהה"&&d.guard).sort((a,b)=>monthKey(a.month)-monthKey(b.month));
   let alerts=0;
   const sections=[];
-  const push=(title,items,info="")=>{
+  const push=(title,items,info="",unverified="")=>{
     const badItems=items.filter(Boolean);
     if(!badItems.length&&docs.length<3)return;
     sections.push('<div class="guard-check"><b>'+esc(title)+'</b>'+
       (info?'<div class="small">'+esc(info)+'</div>':'')+
-      (badItems.length?badItems.map(x=>'<div class="flag warn">'+esc(x)+'</div>').join(""):'<div class="flag ok">לא זוהתה חריגה בולטת.</div>')+
+      (badItems.length?badItems.map(x=>'<div class="flag warn">'+esc(x)+'</div>').join(""):
+        unverified?'<div class="flag info">'+esc(unverified)+'</div>':
+        '<div class="flag ok">לא זוהתה חריגה בולטת.</div>')+
       '</div>');
   };
 
@@ -591,44 +599,50 @@ function renderPayrollGuard(pays){
     push("2. חופשה ומחלה",issues,"בודק גם את החשבון בתוך התלוש וגם רצף יתרות מחודש לחודש.");
   }
 
-  // 3. National insurance + health contribution consistency.
+  // 3. National insurance & health: never compare a raw OCR-based
+  // percentage to a median. The screenshots contained impossible "96%" rates
+  // caused by a misread gross base. Confirm 2026 employee deductions against
+  // the actual amounts, current gross and 2026 payroll-table calculation.
   {
-    const issues=[];
-    for(const field of [["niRate","ביטוח לאומי"],["healthRate","ביטוח בריאות"]]){
-      const vals=docs.map(d=>d.guard[field[0]]).filter(Number.isFinite);
-      const base=median(vals);
-      if(vals.length>=4&&Number.isFinite(base)){
-        const threshold=Math.max(.6,Math.abs(base)*.25);
-        for(const d of docs){
-          const v=d.guard[field[0]];
-          if(Number.isFinite(v)&&Math.abs(v-base)>=threshold){
-            issues.push(d.month+": שיעור "+field[1]+" האפקטיבי "+fmt(v)+"% לעומת חציון "+fmt(base)+"%.");
-            addGuardIssue(d.month,"שיעור "+field[1]+" חריג ביחס לשאר החודשים.");
-            alerts++;
-          }
-        }
+    const info=[],issues=[],unverified=[];
+    for(const d of docs){
+      const g=d.guard,gross=g.grossBL,ni=g.ni,health=g.health,s=g.summary;
+      const date=Number(d.month.split("/")[1]);
+      if(date!==2026||!s||![gross,ni,health,s.grossCurrent].every(Number.isFinite)||
+         gross<1000||Math.abs(gross-s.grossCurrent)>Math.max(2500,s.grossCurrent*.3)||
+         ni<0||health<0||ni+health>gross*.2){
+        unverified.push(d.month);
+        continue;
       }
+      const exp=expectedEmployeeDeductions2026(gross);
+      if(Math.abs(ni-exp.ni)>Math.max(2,exp.ni*.02)||
+         Math.abs(health-exp.health)>Math.max(2,exp.health*.02)){
+        unverified.push(d.month);
+        continue;
+      }
+      info.push(d.month+": סכומי ביטוח לאומי ובריאות נבדקו מול בסיס החיוב.");
     }
-    push("3. ביטוח לאומי ובריאות",issues,"השוואה רב־חודשית של הניכוי מול בסיס ביטוח לאומי שנקרא מהתלוש.");
+    push("3. ביטוח לאומי ובריאות",issues,
+      "שיעורי ניכוי משתנים עם ההכנסה החייבת. חוסר אימות קריאה לא יהפוך להתראה.",
+      unverified.length?"לא ניתן לאמת נתונים בחודשים: "+unverified.join(", ")+".":"");
+    if(info.length)sections.push('<div class="flag info">'+esc("אומתו אריתמטית "+info.length+" חודשי ביטוח מול בסיס החיוב.")+'</div>');
   }
 
-  // 4. Pension contribution rate/base consistency.
+
+  // 4. Employee pension contribution: show a changed rate only if BOTH
+  // same-line, identifiable deduction entries are complete and unambiguous.
+  // A rate shift alone is informational (it may reflect a valid agreement).
   {
-    const issues=[];
-    const vals=docs.map(d=>d.guard.pension?.pct).filter(Number.isFinite);
-    const base=modeRounded(vals);
-    if(vals.length>=3&&Number.isFinite(base)){
-      for(const d of docs){
-        const p=d.guard.pension;
-        if(p&&Math.abs(p.pct-base)>.05){
-          issues.push(d.month+": שיעור ניכוי הפנסיה "+fmt(p.pct)+"% לעומת "+fmt(base)+"% ברוב החודשים.");
-          addGuardIssue(d.month,"שיעור ניכוי הפנסיה השתנה מ-"+fmt(base)+"% ל-"+fmt(p.pct)+"%.");
-          alerts++;
-        }
-      }
-    }
-    push("4. פנסיה",issues,"בודק את אחוז הניכוי ואת בסיס ההפרשה כאשר השורה נקראת בביטחון.");
+    const verified=docs.filter(d=>d.guard.pension&&
+      Number.isFinite(d.guard.pension.pct)&&Number.isFinite(d.guard.pension.gross));
+    const base=modeRounded(verified.map(d=>d.guard.pension.pct));
+    const changes=verified.filter(d=>Number.isFinite(base)&&Math.abs(d.guard.pension.pct-base)>.05);
+    push("4. פנסיה",[],
+      "נבדקות רק שורות ניכוי עובד עם שיעור, סכום ובסיס חישוב מאומתים.",
+      (verified.length<3?"אין מספיק שורות פנסיה מזוהות בוודאות; לא ניתן לקבוע חריגה.":
+       changes.length?"אותר שינוי בשיעור הפנסיה, אך דרוש הסכם/בסיס ניכוי לאימות הזכאות.":""));
   }
+
 
   // 5. Tax credit points.
   {
@@ -664,50 +678,46 @@ function renderPayrollGuard(pays){
     push("6. ברוטו → נטו → בנק",issues,"בודק שסך התשלומים פחות ניכויי חובה שווה לנטו, ושהנטו פחות יתר הניכויים שווה לסכום בבנק.");
   }
 
-  // 7. Retroactive payroll adjustments.
+  // 7. Empty "retro differences" headings exist on every payslip.
+  // Record a correction ONLY when the reconciled summary has a real amount.
   {
-    const issues=[];
-    for(const d of docs){
-      const diff=d.guard.summary?.differences;
-      if(Number.isFinite(diff)&&Math.abs(diff)>.5){
-        issues.push(d.month+": זוהו הפרשי שכר בסך ₪"+fmt(diff)+" — יש לבדוק אם הם סוגרים פער מחודש קודם.");
-      }else if(d.guard.hasRetro&&(!Number.isFinite(diff)||Math.abs(diff)<=.5)){
-        issues.push(d.month+": נמצא אזור „פירוט הפרשים”; המערכת תתייחס אליו כרמז לתיקון רטרואקטיבי.");
-      }
-    }
-    push("7. הפרשי שכר רטרואקטיביים",issues,"הפרשים אינם מסומנים כטעות; הם משמשים לקישור אפשרי לפער מחודש קודם.");
+    const items=docs.filter(d=>d.guard.hasRetro).map(d=>
+      d.month+": נרשם הפרש שכר בפועל בסך ₪"+fmt(d.guard.summary.differences)+
+      ". יש לשייך אותו לחודש העבודה לפני קביעת חוסר.");
+    push("7. הפרשי שכר רטרואקטיביים",[],
+      "כותרת ״פירוט הפרשים״ ללא סכום אינה מעידה על תיקון.",
+      items.length?items.join(" "):"לא זוהו סכומי הפרשי שכר מאומתים.");
   }
 
-  // 8. Multi-month robust anomaly detector.
+
+  // 8. Variable gross/net/bank amounts naturally move with shifts,
+  // extra work, tax and allowances. Only track stable pay structures.
   {
     const features=[
-      ["hourly","ערך שעה",d=>d.hourly,1],
-      ["gross","ברוטו שוטף",d=>d.guard.summary?.grossCurrent,300],
-      ["net","נטו",d=>d.guard.summary?.net,300],
-      ["bank","סכום בבנק",d=>d.guard.summary?.bank,300],
-      ["fraction","אחוז/חלקיות משרה",d=>d.guard.employmentFraction,.03]
+      ["ערך שעה",d=>d.hourly,1],
+      ["שכר יסוד",d=>d.guard.summary?.baseSalary,20],
+      ["חלקיות משרה",d=>d.guard.employmentFraction,.03]
     ];
-    const issues=[];
+    const items=[];
     if(docs.length>=5){
-      for(const [,label,getter,minAbs] of features){
+      for(const [label,getter,minAbs] of features){
         const vals=docs.map(getter).filter(Number.isFinite);
         if(vals.length<5)continue;
-        const med=median(vals),m=mad(vals);
-        const floor=Math.max(minAbs,Math.abs(med)*.08);
+        const med=median(vals),m=mad(vals),floor=Math.max(minAbs,Math.abs(med)*.08);
         for(const d of docs){
           const v=getter(d);if(!Number.isFinite(v))continue;
-          const dev=Math.abs(v-med);
-          const robust=m&&m>.0001?dev/(1.4826*m):0;
-          if(dev>=floor&&(robust>=3.5||dev>=Math.abs(med)*.25)){
-            issues.push(d.month+": "+label+" = "+fmt(v)+" לעומת חציון "+fmt(med)+".");
-            addGuardIssue(d.month,label+" חריג ביחס לדפוס הרב־חודשי.");
-            alerts++;
-          }
+          const dev=Math.abs(v-med),robust=m&&m>.0001?dev/(1.4826*m):0;
+          if(dev>=floor&&(robust>=3.5||dev>=Math.abs(med)*.25))
+            items.push(d.month+": "+label+" השתנה ("+fmt(v)+" לעומת חציון "+fmt(med)+
+              "); יש לבדוק מועד שינוי ותנאי העסקה.");
         }
       }
     }
-    push("8. אנומליות רב־חודשיות",issues,"חיישן סטטיסטי שמחפש חודש חריג גם אם עדיין אין כלל חשבונאי ספציפי.");
+    push("8. מגמות רב־חודשיות",[],
+      "שינוי בברוטו, נטו או סכום בבנק אינו התראה על שכר חסר.",
+      items.length?items.join(" "):"לא התגלה שינוי חשוד ברכיבי השכר הקבועים.");
   }
+
 
   el.innerHTML='<article class="month"><div class="month-head"><div><div class="month-name">Payroll Guard — 8 בדיקות</div><div class="small">נבדקו '+docs.length+' תלושי שכר שנקראו וזוהו לפי חודש.</div></div><span class="badge '+(alerts?"warn":"ok")+'">'+(alerts?alerts+" התראות לבדיקה":"ללא חריגה בולטת")+'</span></div>'+
     '<div class="guard-grid">'+sections.join("")+'</div></article>';
@@ -924,7 +934,19 @@ function render(){
         if(missP.length)flags.push(["info","לא נקראו מהתלוש: "+missP.join(", ")+"."]);
       }
 
-      if(ds.length){
+      // Never label a discrepancy or estimate money when OCR has read only
+      // 1/4 or 2/4 overtime categories, when the payroll period is ambiguous,
+      // or when extraction confidence is low.
+      const trustworthy=complete&&lag&&!fallback&&a.confidence>=85&&p.confidence>=85;
+      if(!trustworthy){
+        S.insufficient=true;
+        warn++;cls="warn";title="השוואה לא מאומתת";
+        if(ds.length){
+          flags.push(["info","נראים הבדלים בנתונים שנקראו, אך השוואת השעות אינה מלאה או שיוך התקופה אינו ודאי. לא ניתן לקבוע חוסר או אומדן כספי."]);
+        }else{
+          flags.push(["info","הבדיקה אינה מלאה; יש להשלים נתונים לפני מסקנה כספית."]);
+        }
+      }else if(ds.length){
         const big=ds.some(x=>x.type==="missing"||Math.abs(x.g)>1);
         cls=big?"bad":"warn";title=big?"פער משמעותי לבדיקה":"פער קטן לבדיקה";big?bad++:warn++;
         ds.forEach(x=>{
@@ -952,7 +974,7 @@ function render(){
         else flags.push(["warn","אין כרגע רכיב שעות משותף שנקרא משני המסמכים."]);
       }
       if(Number.isFinite(p.oncall))flags.push(["info","כוננות חול בתלוש: "+fmt(p.oncall)+" שעות/כמות לחישוב שכר. זה אינו מספר הכוננויות."]);
-      const est=estimate(a,p);if(est)flags.push(["info","אומדן כספי גולמי לפי התעריפים שנקראו: כ־₪"+fmt(est)+"."]);
+      const est=trustworthy?estimate(a,p):null;if(est)flags.push(["info","אומדן ראשוני בלבד לפני בדיקת תשלומים משלימים: כ־₪"+fmt(est)+"."]);
     }
     return '<article class="month"><div class="month-head"><div><div class="month-name">חודש '+esc(m)+'</div><div class="small">תלוש משויך: '+esc(p?.month||"—")+'</div></div><span class="badge '+cls+'">'+title+'</span></div>'+
       '<div class="metrics"><div class="metric"><div class="k">נוכחות — נוספות</div><div class="v">'+(a?.otTotal==null?"—":hh(a.otTotal))+'</div></div><div class="metric"><div class="k">תלוש — נוספות</div><div class="v">'+(p?.otTotal==null?"—":hh(p.otTotal))+'</div></div><div class="metric"><div class="k">פער כולל</div><div class="v">'+(gap==null?"—":hh(gap))+'</div></div><div class="metric"><div class="k">ביטחון קריאה</div><div class="v">'+(a&&p?Math.min(a.confidence,p.confidence)+"%":"—")+'</div></div></div>'+
