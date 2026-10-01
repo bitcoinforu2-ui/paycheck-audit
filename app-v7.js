@@ -142,19 +142,18 @@ async function attendancePdfMonth(page){
   // included Hebrew letters and punctuation and consistently missed the date.
   const base=page.getViewport({scale:1});
   if(base.width/base.height<0.63||base.width/base.height>0.78)return null;
-  const scale=6,view=page.getViewport({scale}),full=document.createElement("canvas");
-  full.width=Math.ceil(view.width);full.height=Math.ceil(view.height);
+  const scale=6,templateScale=base.width/595;
+  const left=213*templateScale,top=8*templateScale;
+  const w=44*templateScale,h=15*templateScale;
+  // PDF.js viewport offset clips the rendering directly to a tiny canvas,
+  // instead of allocating an ~80MB six-times-A4 image for each document.
+  const crop=document.createElement("canvas");
+  crop.width=Math.ceil(w*scale);crop.height=Math.ceil(h*scale);
+  const viewport=page.getViewport({scale,offsetX:-left*scale,offsetY:-top*scale});
   try{
-    await page.render({canvasContext:full.getContext("2d"),viewport:view}).promise;
-    const crop=document.createElement("canvas");
-    const templateScale=base.width/595;
-    const left=213*templateScale,top=8*templateScale;
-    const w=44*templateScale,h=15*templateScale;
-    crop.width=Math.round(w*scale);crop.height=Math.round(h*scale);
-    const ctx=crop.getContext("2d");
+    const ctx=crop.getContext("2d",{willReadFrequently:true});
     ctx.fillStyle="#fff";ctx.fillRect(0,0,crop.width,crop.height);
-    ctx.drawImage(full,Math.round(left*scale),Math.round(top*scale),
-      crop.width,crop.height,0,0,crop.width,crop.height);
+    await page.render({canvasContext:ctx,viewport}).promise;
     const blob=await canvasBlob(crop,"image/png");
     // One OCR call on ONLY numeric header, never on the whole PDF, and
     // never on the document-generation timestamp elsewhere on the page.
@@ -163,7 +162,7 @@ async function attendancePdfMonth(page){
     const matches=[...new Set([...String(r.data?.text||"").matchAll(/(?:^|[^\d])(0?[1-9]|1[0-2])\/(20\d{2})(?!\d)/g)]
       .map(m=>String(+m[1]).padStart(2,"0")+"/"+m[2]))];
     return matches.length===1?matches[0]:null;
-  }finally{full.width=0;full.height=0}
+  }finally{crop.width=0;crop.height=0}
 }
 async function ocrBlob(blob,label,base,span){
   const r=await Tesseract.recognize(blob,"heb+eng",{logger:m=>{
@@ -197,7 +196,8 @@ async function pdfText(file,base,span,kind){
     if(txt.replace(/\s+/g,"").length<40)
       txt=await ocrPdfPage(pg,file.name,i,pb,ps);
     const classified=detectDocumentKind(txt);
-    const monthly=tc?attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]):null;
+    const monthly=tc&&classified.kind!=="payslip"?
+      attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]):null;
     if(monthly)sums.push(monthly);
     if(monthly||classified.kind==="attendance"){
       // Exact numeric crop is reliable for the confirmed municipal report
