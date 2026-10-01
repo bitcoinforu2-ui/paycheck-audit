@@ -1,0 +1,25 @@
+name: Payroll regression tests
+on:
+  push:
+    paths:
+      - "app-v7.js"
+      - "payroll-trends.mjs"
+      - "tests/**"
+      - ".github/workflows/payroll-tests.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check browser module syntax
+        run: node --check --input-type=module < app-v7.js
+      - name: Check trends module syntax
+        run: node --check payroll-trends.mjs
+      - name: Run multi-month payroll regression tests
+        run: node --test tests/payroll-trends.test.mjs
