@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {detectVariablePayTrends,monthIndex} from "../payroll-trends.mjs";
+import {detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "../payroll-trends.mjs";
 const slip=(month,state,quantity=null,extra={})=>({month,components:{
   oncall:{state,quantity},...extra
 }});
@@ -71,4 +71,20 @@ test("A three-month history also audits generic variable payment components",()=
 });
 test("Month calculation crosses the year boundary",()=>{
   assert.equal(monthIndex("01/2027")-monthIndex("12/2026"),1);
+});
+
+test("Absent 150% is a verified zero only with full independent PDF evidence",()=>{
+  assert.equal(inferAbsentOvertimeZero({digitalPdfRows:true,reconciledSummary:true,
+    verifiedOtherRateCodes:3,targetCodePresent:false}),true);
+});
+test("Unreadable screenshots never become verified zero",()=>{
+  assert.equal(inferAbsentOvertimeZero({digitalPdfRows:false,reconciledSummary:true,
+    verifiedOtherRateCodes:3,targetCodePresent:false}),false);
+});
+test("Partial PDF or unverified summary stays unknown",()=>{
+  for(const fields of [
+    {digitalPdfRows:true,reconciledSummary:false,verifiedOtherRateCodes:3,targetCodePresent:false},
+    {digitalPdfRows:true,reconciledSummary:true,verifiedOtherRateCodes:2,targetCodePresent:false},
+    {digitalPdfRows:true,reconciledSummary:true,verifiedOtherRateCodes:3,targetCodePresent:true}
+  ])assert.equal(inferAbsentOvertimeZero(fields),false);
 });
