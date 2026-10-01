@@ -53,6 +53,64 @@ function pdfRows(items){
     return a+" || "+b;
   });
 }
+// Attendance PDFs from this municipal export have reversed Hebrew text, but
+// stable visual numeric columns. Read the MONTHLY TOTAL row geometrically.
+function attendancePdfTotals(items,width,height){
+  const factor=width/595,rows=[];
+  for(const it of items){
+    const x=Number(it.transform?.[4]),y=Number(it.transform?.[5]),str=String(it.str||"").trim();
+    if(!str||!Number.isFinite(x)||!Number.isFinite(y))continue;
+    let row=rows.find(r=>Math.abs(r.y-y)<2);
+    if(!row){row={y,items:[]};rows.push(row)}
+    row.items.push({x:x/factor,str});
+  }
+  const read=(r,lo,hi)=>{
+    const txt=r.items.filter(it=>it.x>=lo&&it.x<hi).sort((a,b)=>a.x-b.x)
+      .map(it=>it.str).join("").replace(/[\s|_]/g,"");
+    if(!txt)return {present:false,value:null};
+    const m=txt.match(/^(\d{1,3})[.:](\d{2})$/);
+    return {present:true,value:m&&+m[2]<60?Number(m[1])+Number(m[2])/60:null};
+  };
+  const found=[];
+  for(const row of rows){
+    const top=height-row.y;
+    if(top<height*.48||top>height*.82)continue;
+    const anchors=[[339,370],[308,340],[280,309]].map(a=>read(row,...a));
+    if(anchors.some(a=>!Number.isFinite(a.value)))continue;
+    const cols={ot125:[173,205],ot150:[150,174.9],ot175:[123,149.9],ot200:[96,122.9]};
+    const values={},present={};
+    for(const [key,range] of Object.entries(cols)){
+      const cell=read(row,...range);values[key]=cell.value;present[key]=cell.present;
+    }
+    if(Object.values(present).some((p,i)=>p&&!Number.isFinite(Object.values(values)[i])))continue;
+    const nonempty=Object.values(present).filter(Boolean).length;
+    if(!nonempty||anchors[1].value>400)continue;
+    // Empty cells only mean zero when all independent monthly-row anchors exist.
+    for(const key of Object.keys(values))if(!present[key])values[key]=0;
+    if(Object.values(values).some(v=>v>80)||Object.values(values).reduce((a,b)=>a+b,0)>180)continue;
+    found.push({values,columns:nonempty,method:"pdf-positioned-monthly-summary",
+      required:anchors[0].value,accrued:anchors[1].value,remainder:anchors[2].value});
+  }
+  return found.length===1?found[0]:null;
+}
+// Some report headings contain visibly printed month text NOT exposed via the
+// PDF text layer. OCR only this tiny, isolated heading without the report date.
+async function attendancePdfMonth(page){
+  const scale=3.5,view=page.getViewport({scale}),full=document.createElement("canvas");
+  full.width=Math.ceil(view.width);full.height=Math.ceil(view.height);
+  await page.render({canvasContext:full.getContext("2d"),viewport:view}).promise;
+  const small=document.createElement("canvas");
+  small.width=Math.round(full.width*.19);small.height=Math.round(50*scale);
+  const ctx=small.getContext("2d");
+  ctx.fillStyle="#fff";ctx.fillRect(0,0,small.width,small.height);
+  ctx.drawImage(full,Math.round(full.width*.285),0,small.width,small.height,0,0,small.width,small.height);
+  const blob=await canvasBlob(small,"image/png");
+  const r=await Tesseract.recognize(blob,"eng",{tessedit_char_whitelist:"0123456789/.-"});
+  const months=[...new Set([...String(r.data?.text||"").matchAll(/(?:^|[^\d])(0?[1-9]|1[0-2])[/.-](20\d{2})(?!\d)/g)]
+    .map(m=>String(+m[1]).padStart(2,"0")+"/"+m[2]))];
+  return months.length===1?months[0]:null;
+}
+
 async function ocrBlob(blob,label,base,span){
   const r=await Tesseract.recognize(blob,"heb+eng",{logger:m=>{
     if(m.status==="recognizing text")prog("OCR: "+label,base+span*(m.progress||0));
@@ -69,33 +127,32 @@ async function ocrPdfPage(pg,fileName,pageNo,base,span){
   const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("canvas-to-blob-failed")),"image/jpeg",0.92));
   return ocrBlob(blob,fileName+" — עמוד "+pageNo,base,span);
 }
-async function pdfText(file,base,span){
-  let p;
-  try{
-    p=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise;
-  }catch(err){
-    const e=new Error("PDF_OPEN_FAILED");
-    e.cause=err;
-    throw e;
-  }
-  const out=[];
+async function pdfText(file,base,span,kind){
+  let p;try{p=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise}
+  catch(err){throw new Error("PDF_OPEN_FAILED",{cause:err})}
+  const out=[],sums=[],months=[];
   for(let i=1;i<=p.numPages;i++){
-    const pageBase=base+span*((i-1)/p.numPages);
-    const pageSpan=span/p.numPages;
-    prog("קורא PDF: "+file.name+" — "+i+"/"+p.numPages,pageBase);
+    const pb=base+span*((i-1)/p.numPages),ps=span/p.numPages;
+    prog("קורא PDF: "+file.name+" — "+i+"/"+p.numPages,pb);
     const pg=await p.getPage(i);
-    let txt="";
-    try{
-      const tc=await pg.getTextContent();
-      txt=pdfRows(tc.items).join("\n");
-    }catch{}
-    // Image-only/scanned PDFs often return almost no usable text.
-    // OCR only those pages instead of failing the whole document.
-    const compact=txt.replace(/\s+/g,"").length;
-    if(compact<40){
-      txt=await ocrPdfPage(pg,file.name,i,pageBase,pageSpan);
+    let txt="",tc=null;
+    try{tc=await pg.getTextContent();txt=pdfRows(tc.items).join("\n")}catch{}
+    if(kind==="attendance"){
+      if(tc){
+        const v=attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]);
+        if(v)sums.push(v);
+      }
+      try{const month=await attendancePdfMonth(pg);if(month)months.push(month)}
+      catch(err){console.warn("Attendance month unreadable",err?.message)}
     }
+    if(txt.replace(/\s+/g,"").length<40)txt=await ocrPdfPage(pg,file.name,i,pb,ps);
     out.push(txt);
+  }
+  if(kind==="attendance"){
+    const distinct=[...new Set(sums.map(x=>JSON.stringify(x.values)))];
+    const uniqueMonths=[...new Set(months)];
+    out.unshift("@@ATT_PDF_META "+JSON.stringify({month:uniqueMonths.length===1?uniqueMonths[0]:null,
+      summary:distinct.length===1?sums[0]:null})+" @@");
   }
   return out.join("\n");
 }
@@ -727,7 +784,7 @@ function renderPayrollGuard(pays){
 function parse(kind,text,file){
   const clean=String(text||"").replace(/[\u200e\u200f]/g," ");
   const lines=clean.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
-  const d={kind,fileName:file.name,month:month(clean),hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null,guard:null};
+  const d={kind,fileName:file.name,month:kind==="payslip"?month(clean):"לא זוהה",hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null,guard:null};
   if(kind==="payslip"){
     const explicitRate=hourly(lines);
     const inferredRates=[];
@@ -758,51 +815,33 @@ function parse(kind,text,file){
     d.guard=extractPayrollGuard(clean,lines);
     d.incomeTaxPeriod=incomeTaxFromSlip(lines,d.guard,d.month);
   }else{
-    function durationToken(token){
-      const raw=String(token||"").trim().replace(",",".");
-      let m=raw.match(/^(\d{1,2}):(\d{2})$/);
-      if(m&&+m[2]<=59)return +m[1]+(+m[2]/60);
-      m=raw.match(/^(\d{1,2})\.(\d{2})$/);
-      if(m&&+m[2]<=59)return +m[1]+(+m[2]/60);
-      return null;
-    }
-    function attendanceCandidates(line,pct){
-      const forbidden=new Set([100,125,150,175,200,pct]);
-      const tokens=String(line||"").match(/\d{1,2}:\d{2}|\d{1,2}[.,]\d{2}|\b\d{1,3}\b/g)||[];
-      const out=[];
-      for(const token of tokens){
-        const plain=Number(String(token).replace(",","."));
-        if(forbidden.has(plain))continue;
-        const h=durationToken(token);
-        if(Number.isFinite(h)&&h>=0&&h<80)out.push(h);
-      }
-      return out;
-    }
-    function attendanceMetric(pct){
-      const re=new RegExp("(^|[^0-9])"+pct+"\\s*%?([^0-9]|$)");
-      for(let i=0;i<lines.length;i++){
-        if(!re.test(lines[i]))continue;
-        // Prefer the exact OCR row, then immediate neighbors. Plain integers are never
-        // accepted as hour totals because they are often percentage labels.
-        const order=[i,i+1,i-1].filter(j=>j>=0&&j<lines.length);
-        for(const j of order){
-          const cs=attendanceCandidates(lines[j],pct);
-          if(cs.length)return cs[0];
+    const m=clean.match(/@@ATT_PDF_META (\{[^\n]*\}) @@/);
+    if(m){
+      try{
+        const v=JSON.parse(m[1]);
+        if(/^(0[1-9]|1[0-2])\/20\d{2}$/.test(v.month||""))d.month=v.month;
+        if(v.summary?.method==="pdf-positioned-monthly-summary"&&
+           OT.every(o=>Number.isFinite(v.summary.values?.[o.k]))){
+          for(const o of OT)d[o.k]=v.summary.values[o.k];
+          d.verifiedAttendanceSummary=true;
+          d.attendanceSource="PDF מקורי — סיכום חודשי לפי עמודות";
         }
-      }
-      return null;
+      }catch(err){console.warn("Attendance metadata unreadable",err)}
+    }else{
+      // Screenshots are provisional: NEVER infer totals from adjacent daily rows
+      // or take arbitrary header/generation dates as the work month.
+      const heading=clean.slice(0,800);
+      const months=[...new Set([...heading.matchAll(/(?:נוכחות|לחודש|בחודש)[^\n]{0,70}?(0?[1-9]|1[0-2])[/.-](20\d{2})/g)]
+        .map(m=>String(+m[1]).padStart(2,"0")+"/"+m[2]))];
+      if(months.length===1)d.month=months[0];
     }
-    d.ot125=attendanceMetric(125);
-    d.ot150=attendanceMetric(150);
-    d.ot175=attendanceMetric(175);
-    d.ot200=attendanceMetric(200);
-    d.oncall=fallbackNear(clean,/(?:כוננות\s*חול|כוננות|כוננויות)[^0-9\n]{0,60}(\d{1,3}(?::\d{2}|[.,]\d+)?)/i);
   }
   const vs=OT.map(o=>d[o.k]).filter(Number.isFinite);
   d.otTotal=vs.length?vs.reduce((a,b)=>a+b,0):null;
   if(d.month!=="לא זוהה")d.confidence+=15;
   d.confidence+=Math.min(35,vs.length*9);
   if(kind==="payslip"&&d.hourly)d.confidence+=10;
+  if(kind==="attendance"&&d.verifiedAttendanceSummary)d.confidence=d.month==="לא זוהה"?80:96;
   return d;
 }
 function pairs(){
@@ -917,7 +956,7 @@ function render(){
     if(!a){warn++;S.insufficient=true;title="חסר דוח נוכחות";flags.push(["warn","לא נמצא דוח נוכחות מתאים לתלוש."])}
     else if(!p){warn++;S.insufficient=true;title="חסר תלוש";flags.push(["warn","לא נמצא תלוש מתאים לדוח הנוכחות."])}
     else{
-      if(fallback)flags.push(["info","המסמכים הותאמו לפי סדר ההעלאה כי החודש לא זוהה בוודאות באחד מהם."]);
+      if(fallback)flags.push(["info","שיוך לפי סדר העלאה אינו מאומת ואינו בסיס למסקנה כספית."]);
       if(lag)flags.push(["info","שיוך חודש: דוח הנוכחות של חודש העבודה הותאם לתלוש של החודש הבא (M→M+1), בהתאם לדפוס שאומת בתלושים שנבדקו. ההשוואה כוללת את כל חודש הנוכחות — ללא חיתוך אוטומטי ב־24/25."]);
       if(same)flags.push(["warn","נמצא תלוש מאותו חודש, אך בדוגמאות שאומתו דוח חודש העבודה משולם בדרך כלל בתלוש של החודש הבא. מומלץ לצרף גם את תלוש M+1."]);
       const ac=readCount(a),pc=readCount(p);
@@ -937,9 +976,11 @@ function render(){
       // Never label a discrepancy or estimate money when OCR has read only
       // 1/4 or 2/4 overtime categories, when the payroll period is ambiguous,
       // or when extraction confidence is low.
-      const trustworthy=complete&&lag&&!fallback&&a.confidence>=85&&p.confidence>=85;
+      const trustworthy=complete&&lag&&!fallback&&a.verifiedAttendanceSummary&&a.month!=="לא זוהה"&&a.confidence>=90&&p.confidence>=85;
       if(!trustworthy){
         S.insufficient=true;
+        if(a.month==="לא זוהה")flags.push(["info","חודש העבודה אינו מזוהה בוודאות מתוך כותרת הדוח. תאריך ההפקה אינו חודש העבודה."]);
+        if(!a.verifiedAttendanceSummary)flags.push(["info","סיכום שעות הנוכחות לא אומת מהעמודות המקוריות של ה-PDF; אין אומדן כספי."]);
         warn++;cls="warn";title="השוואה לא מאומתת";
         if(ds.length){
           flags.push(["info","נראים הבדלים בנתונים שנקראו, אך השוואת השעות אינה מלאה או שיוך התקופה אינו ודאי. לא ניתן לקבוע חוסר או אומדן כספי."]);
@@ -1061,7 +1102,7 @@ $("analyzeBtn").onclick=async()=>{
     for(let i=0;i<jobs.length;i++){
       const j=jobs[i],base=i/jobs.length,span=.94/jobs.length,isPdf=j.file.type==="application/pdf"||j.file.name.toLowerCase().endsWith(".pdf");
       try{
-        const text=isPdf?await pdfText(j.file,base,span):await imageText(j.file,base,span);
+        const text=isPdf?await pdfText(j.file,base,span,j.kind):await imageText(j.file,base,span);
         if(!String(text||"").trim())throw new Error("EMPTY_TEXT");
         S.docs.push(parse(j.kind,text,j.file));
       }catch(e){
