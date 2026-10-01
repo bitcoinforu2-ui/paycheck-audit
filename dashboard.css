@@ -38,3 +38,8 @@ svg text{font-family:Heebo,Arial,sans-serif}
 
 /* Override the previous single-column application's global main width. */
 .dashboard-main{max-width:none!important;width:100%!important;margin:0!important}
+
+/* Keep local-history import control as polished as the reference mock. */
+#historyImport{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important;pointer-events:none}
+.private-import>label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;border:1px solid #345b87;background:#122a4c;border-radius:8px;padding:7px 9px;color:#aadcfb;font-size:11px}
+.private-import>label::before{content:"⇧";font-size:14px}
