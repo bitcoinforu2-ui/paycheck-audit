@@ -252,14 +252,14 @@ async function pdfText(file,base,span,kind){
     const classified=detectDocumentKind(txt);
     const monthly=tc&&classified.kind!=="payslip"?
       attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]):null;
-    if(monthly){
-      sums.push(monthly);
-      const cal=attendanceCalendarCandidates(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]);
-      if(cal.candidates.length)calendars.push(cal);
-    }
+    if(monthly)sums.push(monthly);
     if(monthly||classified.kind==="attendance"){
-      // Exact numeric crop is reliable for the confirmed municipal report
-      // template. Other layouts require a manually confirmed month.
+      if(tc){
+        const cal=attendanceCalendarCandidates(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]);
+        if(cal.candidates.length)calendars.push(cal);
+      }
+      // The visual header supplements independent calendar evidence; it is
+      // never replaced by a PDF generation timestamp.
       if(monthly){
         try{const workMonth=await attendancePdfMonth(pg);if(workMonth)months.push(workMonth)}
         catch(err){console.warn("Attendance month header unreadable",err?.message)}
@@ -267,7 +267,7 @@ async function pdfText(file,base,span,kind){
     }
     out.push(txt);
   }
-  if(sums.length||months.length){
+  if(sums.length||months.length||calendars.length){
     const distinct=[...new Set(sums.map(x=>JSON.stringify(x.values)))];
     const uniqueMonths=[...new Set(months)],cal=calendars.length===1?calendars[0]:null;
     const visualMonth=uniqueMonths.length===1?uniqueMonths[0]:null;
@@ -978,7 +978,36 @@ function parse(kind,text,file){
     d.confidence=d.month==="לא זוהה"||d.monthSource==="visual-only"||d.monthSource==="conflicting-evidence"?80:96;
   return d;
 }
+function resolveAttendanceMonths(){
+  const attendance=S.docs.filter(x=>x.kind==="attendance");
+  const payrollMonths=new Map();
+  for(const p of S.docs.filter(x=>x.kind==="payslip"&&x.month!=="לא זוהה"))
+    payrollMonths.set(p.month,(payrollMonths.get(p.month)||0)+1);
+  const reserved=new Set(attendance.filter(a=>a.month!=="לא זוהה").map(a=>a.month));
+  const proposals=new Map(),counts=new Map();
+  for(const a of attendance){
+    if(a.month!=="לא זוהה"||a.monthSource==="conflicting-evidence"||
+       !a.verifiedAttendanceSummary||!Array.isArray(a.monthCandidates))continue;
+    const matches=a.monthCandidates.filter(mm=>
+      !reserved.has(mm)&&payrollMonths.get(shift(mm,1))===1);
+    if(matches.length!==1)continue;
+    const candidate=matches[0];
+    proposals.set(a,candidate);
+    counts.set(candidate,(counts.get(candidate)||0)+1);
+  }
+  for(const [a,candidate] of proposals){
+    if(counts.get(candidate)!==1)continue;
+    // Strong enough to display pairing, not strong enough for money until
+    // actual printed report month is read or the person confirms the month.
+    a.month=candidate;
+    a.monthSource="calendar+unique-payslip";
+    a.monthProposed=true;
+    a.confidence=Math.min(a.confidence,88);
+  }
+}
+
 function pairs(){
+  resolveAttendanceMonths();
   const att=S.docs.filter(d=>d.kind==="attendance").sort((x,y)=>monthKey(x.month)-monthKey(y.month));
   const pay=S.docs.filter(d=>d.kind==="payslip").sort((x,y)=>monthKey(x.month)-monthKey(y.month));
   const byPayMonth=new Map(),attCount=new Map(),used=new Set(),out=[];
@@ -1126,7 +1155,8 @@ function render(){
       const trustworthy=complete&&lag&&!fallback&&a.verifiedAttendanceSummary&&a.month!=="לא זוהה"&&a.confidence>=90&&p.payrollCodesVerified;
       if(!trustworthy){
         S.insufficient=true;
-        if(a.month==="לא זוהה")flags.push(["info","חודש העבודה אינו מזוהה בוודאות מתוך כותרת הדוח. תאריך ההפקה אינו חודש העבודה."]);
+        if(a.month==="לא זוהה")flags.push(["info","לא נקרא חודש העבודה מהכותרת. ניתן לאשר את החודש לפי מועמדי לוח השנה באזור הבדיקה הידנית."]);
+       if(a.monthProposed)flags.push(["info","חודש "+a.month+" זוהה כהצעה לפי ימי השבוע ולפי תלוש עוקב יחיד; יש לאשר את הכותרת לפני מסקנה כספית."]);
         if(!p.payrollCodesVerified)flags.push(["info","התלוש נקרא אך לא כל ארבע הכמויות אומתו ישירות מול שורות קוד השכר; ציון קריאה קודם אינו אימות כספי."]);
         if(!a.verifiedAttendanceSummary)flags.push(["info","סיכום שעות הנוכחות לא אומת מהעמודות המקוריות של ה-PDF; אין אומדן כספי."]);
         warn++;cls="warn";title="השוואה לא מאומתת";
@@ -1193,13 +1223,15 @@ function render(){
       ' · '+esc(d.month)+' · '+esc(d.fileName)+'</b>'+select+
       (d.kind==="unknown"?'<div class="small">הזיהוי אינו ודאי. יש לבחור סוג מסמך ולחשב מחדש.</div>':'')+'</div>';
     const options=[...new Set([
-      d.month,
+      d.month,...(d.monthCandidates||[]),
       ...S.docs.filter(x=>x.kind==="payslip"&&x.month!=="לא זוהה").map(x=>shift(x.month,-1))
     ].filter(mm=>mm&&mm!=="לא זוהה"))].sort((x,y)=>monthKey(x)-monthKey(y));
     const opts='<option value="">בחר חודש עבודה</option>'+options.map(mm=>
       '<option value="'+esc(mm)+'"'+(mm===d.month?' selected':'')+'>'+esc(mm)+'</option>').join("");
     return '<div class="review-doc"><b>🕒 נוכחות · '+esc(d.fileName)+'</b>'+select+
-      '<div class="small">חודש הדוח חייב להיות חודש אחד לפני תלוש השכר. תאריך הפקת PDF אינו חודש העבודה.</div>'+
+      '<div class="small">חודש הדוח חייב להיות חודש אחד לפני תלוש השכר. תאריך הפקת PDF אינו חודש העבודה. '+
+      (d.monthProposed?'חודש '+esc(d.month)+' הוצע לפי ימי השבוע והתלושים שהעלית; יש לאשר אותו לפני מסקנה כספית. ':'')+
+      '</div>'+
       '<label>חודש העבודה <select data-attendance-month="'+i+'">'+opts+'</select></label>'+
       '<div class="small">סיכום שעות PDF: '+(d.verifiedAttendanceSummary?'זוהה':'לא אומת — לא ניתן לקבוע פער כספי')+'</div></div>';
   }).join("");
@@ -1287,6 +1319,8 @@ $("recalcBtn").onclick=()=>{
       doc.month=next;
       // Month is user-confirmed, not extrapolated from PDF generation date.
       doc.workMonthConfirmed=true;
+      doc.monthProposed=false;
+      doc.monthSource="user-confirmed";
       if(doc.verifiedAttendanceSummary)doc.confidence=96;
     }
   }
