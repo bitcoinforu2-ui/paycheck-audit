@@ -37,6 +37,37 @@ function shift(mm,d){
 }
 function lineNums(line){return (String(line).match(/-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?/g)||[]).map(num).filter(Number.isFinite)}
 
+
+// Identify documents by multiple content signatures, never by upload bucket.
+// Absence or contradictory evidence => manual review, not automatic classification.
+function detectDocumentKind(text){
+  const t=String(text||"").replace(/[\u200e\u200f]/g," ").replace(/\s+/g," ");
+  const features={
+    payslip:[
+      [/(?:שכר\s*בסיס|סיסב\s*רכש)/,5],
+      [/(?:ניכויי?\s*חובה|הבוח\s*ייוכינ)/,4],
+      [/(?:סכום\s*בבנק|קנבב\s*םוכס)/,4],
+      [/(?:ברוטו\s*שוטף|ףטוש\s*וטורב)/,4],
+      [/(?:תלוש\s*שכר|שכר\s*נטו|וטנ\s*רכש)/,3],
+      [/(?:ברוטו\s*למס\s*הכנסה|הסנכה\s*סמל\s*וטורב)/,3],
+      [/(?:94010|91001|92041)/,2]
+    ],
+    attendance:[
+      [/(?:גליון\s*נוכחות|גיליון\s*נוכחות|ןוילג\s*תוחכונ|תוחכונ\s*םכסמ)/,7],
+      [/(?:משמרות\s*רגילות|תוליגרתורמשמ|הסכם\s*סוג)/,3],
+      [/(?:\b19410\b)/,3],
+      [/(?:כניסה.{0,20}יציאה|הסינכ.{0,30}האיצי)/,3],
+      [/(?:תועש\s*,?%\s*תופסונ|תופסונמףדע|שעות\s*נוספות.{0,25}(?:125|150|175|200))/,3],
+      [/(?:עובשלתועש|לשבוע\s*שעות|שעות\s*לשבוע)/,2]
+    ]
+  };
+  const score=kind=>features[kind].reduce((n,[re,points])=>n+(re.test(t)?points:0),0);
+  const pay=score("payslip"),att=score("attendance");
+  if(pay>=6&&pay>=att+4)return {kind:"payslip",confidence:pay,reason:"content-signatures"};
+  if(att>=6&&att>=pay+4)return {kind:"attendance",confidence:att,reason:"content-signatures"};
+  return {kind:"unknown",confidence:0,reason:"insufficient-or-ambiguous-signatures"};
+}
+
 function pdfRows(items){
   const rows=[];
   for(const it of items){
@@ -137,7 +168,10 @@ async function pdfText(file,base,span,kind){
     const pg=await p.getPage(i);
     let txt="",tc=null;
     try{tc=await pg.getTextContent();txt=pdfRows(tc.items).join("\n")}catch{}
-    if(kind==="attendance"){
+    // The caller's upload slot cannot determine the document type.
+    // Probe geometry when selectable text identifies an attendance report.
+    const classified=detectDocumentKind(txt);
+    if(classified.kind==="attendance"){
       if(tc){
         const v=attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]);
         if(v)sums.push(v);
@@ -148,7 +182,7 @@ async function pdfText(file,base,span,kind){
     if(txt.replace(/\s+/g,"").length<40)txt=await ocrPdfPage(pg,file.name,i,pb,ps);
     out.push(txt);
   }
-  if(kind==="attendance"){
+  if(sums.length||months.length){
     const distinct=[...new Set(sums.map(x=>JSON.stringify(x.values)))];
     const uniqueMonths=[...new Set(months)];
     out.unshift("@@ATT_PDF_META "+JSON.stringify({month:uniqueMonths.length===1?uniqueMonths[0]:null,
@@ -845,8 +879,8 @@ function parse(kind,text,file){
   return d;
 }
 function pairs(){
-  const att=S.docs.filter(d=>d.kind==="attendance");
-  const pay=S.docs.filter(d=>d.kind==="payslip");
+  const att=S.docs.filter(d=>d.kind==="attendance").sort((x,y)=>monthKey(x.month)-monthKey(y.month));
+  const pay=S.docs.filter(d=>d.kind==="payslip").sort((x,y)=>monthKey(x.month)-monthKey(y.month));
   const byPayMonth=new Map(),attCount=new Map(),used=new Set(),out=[];
   for(const p of pay)if(p.month!=="לא זוהה"){
     if(!byPayMonth.has(p.month))byPayMonth.set(p.month,[]);
@@ -919,6 +953,8 @@ function monthKey(mm){
 }
 function render(){
   S.issues=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
+  const unresolved=S.docs.filter(d=>d.kind==="unknown");
+  if(unresolved.length)S.insufficient=true;
   const pays=S.docs.filter(d=>d.kind==="payslip");
   const rated=pays.filter(d=>Number.isFinite(d.hourly)).sort((a,b)=>monthKey(b.month)-monthKey(a.month));
   const rateDoc=rated[0]||null,rate=rateDoc?.hourly??null;
@@ -929,6 +965,11 @@ function render(){
     ["שמירת מסמכים","לא נשמרים במאגר"]
   ].map(([k,v])=>'<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
   $("autoProfileSection").classList.remove("hidden");
+  const typeSummary=$("typeSummary");
+  if(typeSummary)typeSummary.innerHTML='<div class="flag info">זוהו לפי תוכן הקבצים: '+
+    pays.length+' תלושי שכר, '+S.docs.filter(d=>d.kind==="attendance").length+
+    ' דוחות נוכחות'+(unresolved.length?' · '+unresolved.length+
+    ' מסמכים דורשים זיהוי ידני':'')+'. הקבצים ממוינים לפי חודש העבודה ומשויכים לתלוש בחודש העוקב.</div>';
 
   $("monthResults").innerHTML=ps.map(({a,p,fallback,lag,same})=>{
     const m=a&&a.month!=="לא זוהה"?a.month:(p?.month||"לא זוהה"),flags=[];
@@ -1008,17 +1049,25 @@ function render(){
   const taxAudit=renderTaxAnalysis(pays);
   if(taxAudit.alerts)warn+=taxAudit.alerts;
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n");
-  const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים משמעותיים לבדיקה."}else if(S.insufficient){o.className="overall warn";o.textContent="הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
+  const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים משמעותיים לבדיקה."}else if(S.insufficient){o.className="overall warn";o.textContent=unresolved.length?
+    "יש "+unresolved.length+" מסמכים שסוגם לא זוהה. בדוק את הזיהוי באזור הבדיקה הידנית.":
+    "הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
   $("resultsSection").classList.remove("hidden");
   $("reviewRows").innerHTML=S.docs.map((d,i)=>{
-    if(d.kind!=="attendance")return '<div class="review-doc"><b>📄 תלוש · '+esc(d.month)+' · '+esc(d.fileName)+'</b></div>';
+    const select='<label class="small">סוג מסמך <select data-document-kind="'+i+'">'+
+      '<option value="unknown"'+(d.kind==="unknown"?' selected':'')+'>לא זוהה — יש לבחור</option>'+
+      '<option value="payslip"'+(d.kind==="payslip"?' selected':'')+'>תלוש שכר</option>'+
+      '<option value="attendance"'+(d.kind==="attendance"?' selected':'')+'>דוח נוכחות</option></select></label>';
+    if(d.kind!=="attendance")return '<div class="review-doc"><b>'+esc(d.kind==="payslip"?"📄 תלוש שכר":"מסמך לא מזוהה")+
+      ' · '+esc(d.month)+' · '+esc(d.fileName)+'</b>'+select+
+      (d.kind==="unknown"?'<div class="small">הזיהוי אינו ודאי. יש לבחור סוג מסמך ולחשב מחדש.</div>':'')+'</div>';
     const options=[...new Set([
       d.month,
       ...S.docs.filter(x=>x.kind==="payslip"&&x.month!=="לא זוהה").map(x=>shift(x.month,-1))
     ].filter(mm=>mm&&mm!=="לא זוהה"))].sort((x,y)=>monthKey(x)-monthKey(y));
     const opts='<option value="">בחר חודש עבודה</option>'+options.map(mm=>
       '<option value="'+esc(mm)+'"'+(mm===d.month?' selected':'')+'>'+esc(mm)+'</option>').join("");
-    return '<div class="review-doc"><b>🕒 נוכחות · '+esc(d.fileName)+'</b>'+
+    return '<div class="review-doc"><b>🕒 נוכחות · '+esc(d.fileName)+'</b>'+select+
       '<div class="small">חודש הדוח חייב להיות חודש אחד לפני תלוש השכר. תאריך הפקת PDF אינו חודש העבודה.</div>'+
       '<label>חודש העבודה <select data-attendance-month="'+i+'">'+opts+'</select></label>'+
       '<div class="small">סיכום שעות PDF: '+(d.verifiedAttendanceSummary?'זוהה':'לא אומת — לא ניתן לקבוע פער כספי')+'</div></div>';
@@ -1084,6 +1133,16 @@ $("requestBtn").onclick=()=>{$("requestText").value=request();$("requestSection"
 $("copyRequestBtn").onclick=async()=>{try{await navigator.clipboard.writeText($("requestText").value);$("copyRequestBtn").textContent="הועתק ✓"}catch{}};
 $("copyBtn").onclick=async()=>{try{await navigator.clipboard.writeText(S.report);$("copyBtn").textContent="הועתק ✓"}catch{}};
 $("recalcBtn").onclick=()=>{
+  // User can correct uncertain or mistaken document classifications without
+  // re-uploading. Retain raw source text only for this in-memory review.
+  for(const field of document.querySelectorAll("[data-document-kind]")){
+    const idx=Number(field.dataset.documentKind),d=S.docs[idx],kind=field.value;
+    if(!d||!["attendance","payslip"].includes(kind)||kind===d.kind)continue;
+    const corrected=parse(kind,d.rawText||"",{name:d.fileName});
+    corrected.rawText=d.rawText;
+    corrected.userChosenKind=true;
+    S.docs[idx]=corrected;
+  }
   for(const field of document.querySelectorAll("[data-attendance-month]")){
     const doc=S.docs[Number(field.dataset.attendanceMonth)];
     if(!doc||doc.kind!=="attendance")continue;
@@ -1099,17 +1158,25 @@ $("recalcBtn").onclick=()=>{
 };
 
 $("analyzeBtn").onclick=async()=>{
-  if(!S.pay.length||!S.att.length){alert("צריך לפחות תלוש אחד ודוח נוכחות אחד.");return}
+  if(S.pay.length+S.att.length<2){alert("נא להעלות לפחות שני מסמכים. אפשר לבחור את כל הקבצים באותו מקום וללא סדר מסוים.");return}
   $("analyzeBtn").disabled=true;S.docs=[];$("requestSection").classList.add("hidden");
-  const jobs=[...S.pay.map(file=>({file,kind:"payslip"})),...S.att.map(file=>({file,kind:"attendance"}))];
+  const seen=new Set();
+  const jobs=[...S.pay,...S.att].filter(file=>{
+    const key=fileKey(file);if(seen.has(key))return false;seen.add(key);return true;
+  }).map(file=>({file}));
   const failed=[];
   try{
     for(let i=0;i<jobs.length;i++){
       const j=jobs[i],base=i/jobs.length,span=.94/jobs.length,isPdf=j.file.type==="application/pdf"||j.file.name.toLowerCase().endsWith(".pdf");
       try{
-        const text=isPdf?await pdfText(j.file,base,span,j.kind):await imageText(j.file,base,span);
+        const text=isPdf?await pdfText(j.file,base,span,"auto"):await imageText(j.file,base,span);
         if(!String(text||"").trim())throw new Error("EMPTY_TEXT");
-        S.docs.push(parse(j.kind,text,j.file));
+        const detected=detectDocumentKind(text);
+        const d=detected.kind==="unknown"?{kind:"unknown",month:"לא זוהה",fileName:j.file.name,
+          confidence:0,tariffs:{},classification:detected}:
+          parse(detected.kind,text,j.file);
+        d.classification=detected;
+        d.rawText=text;S.docs.push(d);
       }catch(e){
         console.error("Failed file:",j.file.name,e);
         failed.push({name:j.file.name,reason:e?.message||"read-failed"});
