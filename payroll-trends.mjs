@@ -61,3 +61,14 @@ export function detectVariablePayTrends(docs,definitions=VARIABLE_PAY_COMPONENTS
   }
   return findings;
 }
+
+/**
+ * Infer a printed zero only when the digital payslip is sufficiently complete:
+ * three OTHER overtime code rows verified, a reconciled summary, and the
+ * target code entirely absent. OCR and partially read slips stay unknown.
+ */
+export function inferAbsentOvertimeZero({digitalPdfRows=false,reconciledSummary=false,
+  verifiedOtherRateCodes=0,targetCodePresent=true}={}){
+  return digitalPdfRows===true&&reconciledSummary===true&&
+    verifiedOtherRateCodes===3&&targetCodePresent===false;
+}
