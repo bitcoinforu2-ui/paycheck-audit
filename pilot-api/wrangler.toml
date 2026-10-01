@@ -1,0 +1,16 @@
+name = "paycheck-pilot-data"
+main = "worker.mjs"
+compatibility_date = "2026-10-01"
+[vars]
+# Fill these locally in Wrangler/Cloudflare; NEVER include personal or secret values in git.
+ALLOWED_ORIGIN = "https://YOUR-GITHUB-ACCOUNT.github.io"
+CF_ACCESS_TEAM_DOMAIN = "https://YOUR-TEAM.cloudflareaccess.com"
+CF_ACCESS_AUD = "CONFIGURE_CLOUDFLARE_ACCESS_AUDIENCE"
+TURNSTILE_HOSTNAME = "YOUR-GITHUB-ACCOUNT.github.io"
+# ADMIN_EMAIL and TURNSTILE_SECRET must be Wrangler secrets, not [vars].
+[[d1_databases]]
+binding = "PILOT_DB"
+database_name = "paycheck-pilot"
+database_id = "REPLACE_WITH_REAL_DATABASE_ID"
+[triggers]
+crons = ["15 2 * * *"]
