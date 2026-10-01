@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
-const S={pay:[],att:[],docs:[],issues:[],report:"",insufficient:false};
+const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false};
 
 const pdfjs=window.pdfjsLib;
 if(!pdfjs)throw new Error("PDFJS_NOT_LOADED");
@@ -1000,7 +1000,7 @@ function parse(kind,text,file){
       if(oi>=0)on=metricFromNums(lineNums(lines.slice(Math.max(0,oi-2),Math.min(lines.length,oi+3)).join(" ")),oncallRate,1,[4392]);
     }
     if(on){
-      d.oncall=on.q;d.oncallEvidence=on.source||"inferred";d.tariffs.oncall=on.tariff;
+      d.oncall=on.q;d.oncallEvidence=on.source||"inferred";d.tariffs.oncall=on.tariff;d.oncallPaidAmount=on.amount;
       if(Number.isFinite(on.base))inferredRates.push(on.base);
     }
     d.payrollCodesVerified=OT.every(o=>d.payEvidence[o.k]==='exact-code-row');
@@ -1350,6 +1350,18 @@ function render(){
       '<div class="small">סיכום שעות PDF: '+(d.verifiedAttendanceSummary?'זוהה':'לא אומת — לא ניתן לקבוע פער כספי')+'</div></div>';
   }).join("");
   $("reviewSection").classList.remove("hidden");
+  // Dashboard receives a finite, document-derived view: never sample data.
+  window.dispatchEvent(new CustomEvent("paycheck:dashboard-data",{detail:{
+    docs:S.docs.map(d=>({
+      kind:d.kind,month:d.month,hourly:d.hourly,hourlySource:d.hourlySource,
+      ot125:d.ot125,ot150:d.ot150,ot175:d.ot175,ot200:d.ot200,
+      oncallPaidAmount:d.oncallPaidAmount,
+      verifiedAttendanceSummary:d.verifiedAttendanceSummary,
+      guard:d.guard?{summary:d.guard.summary,recurring:d.guard.recurring}:null
+    })),
+    findings:S.variableFindings||[],issues:S.issues||[],
+    pairs:ps.map(x=>({attendance:x.a?.month||null,payslip:x.p?.month||null}))
+  }}));
 }
 function request(){
   if(!S.issues.length&&S.questions.length){
@@ -1399,6 +1411,69 @@ function renderSelectedFiles(){
   });
 }
 
+// Private, local-only JSON import lets the owner seed a preprocessed PDF
+// history without placing personal financial data in a public repository.
+// Ordinary users can instead upload their PDF history directly.
+$("historyImport").onchange=async e=>{
+  const file=e.target.files?.[0],note=$("historyImportStatus");
+  if(!file)return;
+  try{
+    if(file.size>1_000_000)throw Error("large");
+    const pack=JSON.parse(await file.text());
+    if(pack.format!=="paycheck-history-v1"||!Array.isArray(pack.slips)||
+       !Array.isArray(pack.attendance)||pack.slips.length>100||
+       pack.attendance.length>100)throw Error("invalid");
+    const validMonth=mm=>/^(0[1-9]|1[0-2])\/20\d{2}$/.test(mm||"");
+    const validNum=v=>v==null||(typeof v==="number"&&Number.isFinite(v)&&Math.abs(v)<1_000_000);
+    const data=[];
+    for(const x of pack.slips){
+      if(!validMonth(x.month)||![x.hourly,x.ot125,x.ot150,x.ot175,x.ot200,
+        x.oncall,x.oncallPaidAmount,...Object.values(x.summary||{})].every(validNum))
+        throw Error("invalid-pay");
+      if(!x.summary||!["grossCurrent","totalPayments","net","mandatoryDeductions",
+        "bank","officeDeductions","externalDeductions"].every(k=>validNum(x.summary[k])&&Number.isFinite(x.summary[k])))
+        throw Error("missing-summary");
+      const s=x.summary;
+      if(Math.abs(s.totalPayments-s.mandatoryDeductions-s.net)>2||
+         Math.abs(s.net-s.officeDeductions-s.externalDeductions-s.bank)>2)
+        throw Error("summary-mismatch");
+      data.push({kind:"payslip",month:x.month,fileName:"ייבוא פרטי · "+x.month,
+        confidence:90,hourly:x.hourly,hourlySource:"חבילת נתונים מתלוש קיים — אימות מקורי מומלץ",
+        ot125:x.ot125,ot150:x.ot150,ot175:x.ot175,ot200:x.ot200,
+        oncall:x.oncall,oncallPaidAmount:x.oncallPaidAmount,
+        tariffs:{},guard:{summary:s},payrollCodesVerified:false,
+        variableComponents:x.variableComponents||{}});
+    }
+    for(const x of pack.attendance){
+      if(!validMonth(x.month)||![x.ot125,x.ot150,x.ot175,x.ot200].every(validNum))
+        throw Error("invalid-att");
+      data.push({kind:"attendance",month:x.month,fileName:"ייבוא פרטי · "+x.month,
+        confidence:80,ot125:x.ot125,ot150:x.ot150,ot175:x.ot175,ot200:x.ot200,
+        verifiedAttendanceSummary:true,monthSource:"user-imported",
+        monthCandidates:[],variableComponents:{}});
+    }
+    // Multiple privately generated history packs may be imported in batches.
+    const imported=new Map(S.imported.map(d=>[d.kind+":"+d.month,d]));
+    for(const d of data)imported.set(d.kind+":"+d.month,d);
+    S.imported=[...imported.values()];
+    const current=new Map(S.docs.map(d=>[d.kind+":"+d.month,d]));
+    for(const d of data){
+      const key=d.kind+":"+d.month,existing=current.get(key);
+      // Never replace a freshly read PDF with a lower-provenance JSON record.
+      if(!existing||String(existing.fileName||"").startsWith("ייבוא פרטי"))
+        current.set(key,d);
+    }
+    S.docs=[...current.values()];
+    note.textContent="נקלטו "+data.filter(d=>d.kind==="payslip").length+
+      " תלושים ו־"+data.filter(d=>d.kind==="attendance").length+" דוחות. ייבוא מקומי בלבד.";
+    note.style.color="#77e7c9";
+    render();
+    $("history").scrollIntoView({behavior:"smooth"});
+  }catch(err){
+    note.textContent="הקובץ לא מתאים לייבוא או אינו מאוזן. אין שינוי בנתונים.";
+    console.warn("Invalid local history import",err.message);
+  }finally{e.target.value=""}
+};
 $("payFiles").onchange=e=>{
   S.pay=mergeFiles(S.pay,[...e.target.files]);
   e.target.value="";
@@ -1443,7 +1518,7 @@ $("recalcBtn").onclick=()=>{
 
 $("analyzeBtn").onclick=async()=>{
   if(S.pay.length+S.att.length<2){alert("נא להעלות לפחות שני מסמכים. אפשר לבחור את כל הקבצים באותו מקום וללא סדר מסוים.");return}
-  $("analyzeBtn").disabled=true;S.docs=[];$("requestSection").classList.add("hidden");
+  $("analyzeBtn").disabled=true;S.docs=[...S.imported];$("requestSection").classList.add("hidden");
   const seen=new Set();
   const jobs=[...S.pay,...S.att].filter(file=>{
     const key=fileKey(file);if(seen.has(key))return false;seen.add(key);return true;
@@ -1460,7 +1535,12 @@ $("analyzeBtn").onclick=async()=>{
           confidence:0,tariffs:{},classification:detected}:
           parse(detected.kind,text,j.file);
         d.classification=detected;
-        d.rawText=text;S.docs.push(d);
+        d.rawText=text;
+        // A freshly uploaded PDF supersedes a prior local data-pack record
+        // for the same document kind and month, without changing other months.
+        if(d.month!=="לא זוהה")S.docs=S.docs.filter(old=>
+          old.kind!==d.kind||old.month!==d.month);
+        S.docs.push(d);
       }catch(e){
         console.error("Failed file:",j.file.name,e);
         failed.push({name:j.file.name,reason:e?.message||"read-failed"});

@@ -3,121 +3,144 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0f172a">
-  <title>בדיקת שכר חכמה</title>
+  <meta name="theme-color" content="#06122b">
+  <meta name="description" content="בדיקת התלוש שלי: מנוע פרטי להשוואת תלושי שכר, דוחות נוכחות והיסטוריה רב-שנתית.">
+  <title>בדיקת התלוש שלי · דשבורד</title>
   <link rel="stylesheet" href="styles.css?v=9">
+  <link rel="stylesheet" href="dashboard.css?v=1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
-<header class="top">
-  <div>
-    <div class="eyebrow">PAYCHECK AUDIT • V22 VERIFIED ZERO + MONTHLY GUARD</div>
-    <h1>בדיקת התלוש שלי</h1>
-    <p>אפשר להעלות גם שנה שלמה של תלושי שכר ודוחות נוכחות, בכל סדר. המערכת משווה תלוש מול תלוש כדי לאתר רכיבים שנעלמו, ובנוסף מתאימה נוכחות לתלוש העוקב כדי לבדוק שעות ותשלומים.</p>
-  </div>
-  <span class="privacy">🔒 עיבוד מקומי</span>
-</header>
+<div class="app-shell">
+  <header class="app-topbar">
+    <div class="brand"><span class="brand-symbol" aria-hidden="true">✓</span><div><strong>בדיקת התלוש שלי</strong><small>מגלים. בודקים. מגיע לך יותר.</small></div></div>
+    <label class="search-top"><span aria-hidden="true">⌕</span><input id="dashboardSearch" type="search" placeholder="חיפוש בממצאים ובחודשים..." aria-label="חיפוש בממצאים"></label>
+    <div class="top-side"><span class="private-pill">◈ ניתוח מקומי ופרטי</span><button id="mobileNavToggle" class="icon-btn menu-toggle" aria-label="פתיחת תפריט" aria-expanded="false">☰</button></div>
+  </header>
 
-<main>
-  <section class="card intro">
-    <h2>בדיקה אישית ב־3 צעדים</h2>
-    <div class="steps steps-3">
-      <div><b>1</b><span>מעלים תלוש/ים</span></div>
-      <div><b>2</b><span>מעלים דוח/ות נוכחות</span></div>
-      <div><b>3</b><span>מקבלים פערים ופנייה מוכנה</span></div>
-    </div>
-    <p class="small">העלאה חופשית: אפשר לשים את כל הקבצים באזור העלאה אחד. המערכת ממיינת אוטומטית לפי התוכן והחודש, כולל PDF וצילומי מסך. מסמך לא מזוהה מועבר לאימות ידני ולא ייצור התראת חוסר שגויה.</p>
-  </section>
+  <aside id="sideNav" class="sidebar" aria-label="ניווט ראשי">
+    <div class="nav-label">מרכז בקרה</div>
+    <nav class="side-items">
+      <button class="nav-item active" data-nav="home"><span class="nav-ic">▦</span>דשבורד</button>
+      <button class="nav-item" data-nav="upload"><span class="nav-ic">⇧</span>העלאת מסמכים</button>
+      <button class="nav-item" data-nav="payroll"><span class="nav-ic">▤</span>תלושים שלי</button>
+      <button class="nav-item" data-nav="attendance"><span class="nav-ic">◷</span>דוחות נוכחות</button>
+      <button class="nav-item" data-nav="findings"><span class="nav-ic">⚠</span>ממצאים וחריגות</button>
+      <button class="nav-item" data-nav="monthly"><span class="nav-ic">▥</span>השוואות חודשיות</button>
+      <button class="nav-item" data-nav="history"><span class="nav-ic">⌁</span>ההיסטוריה שלי</button>
+      <button class="nav-item" data-nav="tax"><span class="nav-ic">◉</span>מיסוי והפרשות</button>
+      <button class="nav-item" data-nav="letter"><span class="nav-ic">✉</span>מכתבים ומסמכים</button>
+    </nav>
+    <section class="nav-bottom">
+      <span class="nav-spark">✦</span><strong>היסטוריית השכר שלך</strong>
+      <p>מסע של ארבע שנים מתחיל במסמכים אמיתיים. כל חודש שנוסיף מרחיב את התמונה.</p>
+      <button id="sideHistoryBtn" class="gradient-btn">הצג היסטוריה ←</button>
+    </section>
+  </aside>
 
-  <section class="upload-grid">
-    <article class="card">
-      <div class="type-tag">תלושי שכר</div>
-      <h2>📄 שכר</h2>
-      <p>PDF או צילום. אפשר להעלות כאן גם דוחות נוכחות — הזיהוי אוטומטי.</p>
-      <label class="drop">
-        <input id="payFiles" type="file" accept="application/pdf,image/*" multiple>
-        <strong>הוסף תלושים</strong>
-        <span>לחץ לבחירת קבצים</span>
-      </label>
-      <div id="payList" class="file-list"></div>
-    </article>
+  <main class="dashboard-main" id="home">
+    <section class="hero-band">
+      <div class="hero-copy"><span class="eyebrow-light">מרכז הבקרה האישי שלך</span><h1>המשכורת שלך. התמונה המלאה.</h1><p>בודקים תלושים ונוכחות, חושפים פערים ומגלים איך השכר והתנאים מתקדמים לאורך הזמן.</p></div>
+      <svg class="hero-wave" viewBox="0 0 520 110" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="wave" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#712cf8"/><stop offset=".55" stop-color="#276dff"/><stop offset="1" stop-color="#1fead9"/></linearGradient></defs><path d="M-10 70 C70 5,130 110,220 58 S365 8,520 67" stroke="url(#wave)" stroke-width="2.4" fill="none"/><path d="M-10 85 C92 8,142 102,234 70 S404 4,530 73" stroke="#5533d9" stroke-width="1.5" fill="none" opacity=".4"/></svg>
+    </section>
+    <section class="metric-grid" aria-label="נתוני הבדיקה">
+      <div class="metric-card accent-teal"><span class="metric-icon">✓</span><div><span>איכות פענוח המסמכים</span><strong id="kpiQuality">—</strong><small id="kpiQualityNote">ממתין להעלאת קבצים</small></div></div>
+      <div class="metric-card accent-blue"><span class="metric-icon">▤</span><div><span>תלושים שנותחו</span><strong id="kpiPayslips">0</strong><small id="kpiReports">0 דוחות נוכחות</small></div></div>
+      <div class="metric-card accent-rose"><span class="metric-icon">!</span><div><span>ממצאים שדורשים בירור</span><strong id="kpiFindings">—</strong><small>לא כל פער מעיד על חוסר תשלום</small></div></div>
+      <div class="metric-card accent-violet"><span class="metric-icon">₪</span><div><span>כסף שהושב ואומת</span><strong id="kpiRefund">—</strong><small>טרם דווח החזר מאומת</small></div></div>
+    </section>
 
-    <article class="card">
-      <div class="type-tag">כניסה / יציאה</div>
-      <h2>🕒 נוכחות</h2>
-      <p>PDF או צילום. אפשר להעלות כאן גם תלושי שכר — הזיהוי אוטומטי.</p>
-      <label class="drop">
-        <input id="attFiles" type="file" accept="application/pdf,image/*" multiple>
-        <strong>הוסף דוחות נוכחות</strong>
-        <span>לחץ לבחירת קבצים</span>
-      </label>
-      <div id="attList" class="file-list"></div>
-    </article>
-  </section>
+    <section class="dashboard-grid top-grid">
+      <article class="dash-panel comparison-panel" id="monthly">
+        <div class="panel-heading"><div><h2>השוואת שכר חודשית</h2><p>ברוטו ונטו מתוך התלושים שנקראו — ללא נתונים מומצאים</p></div><span class="panel-mark blue-mark">▥</span></div>
+        <div class="chart-key"><span><i class="dot violet-dot"></i>ברוטו</span><span><i class="dot blue-dot"></i>נטו</span></div>
+        <div class="chart-wrap" id="monthlyChart"><p class="chart-empty">הגרף יתמלא לאחר טעינת תלושי שכר.</p></div>
+        <p class="chart-foot" id="monthlyFoot">כל הנתונים נשארים בדפדפן שלך.</p>
+      </article>
 
-  <section class="card">
-    <button id="analyzeBtn" class="primary">בדוק את השכר שלי</button>
-    <div id="progressWrap" class="hidden">
-      <div class="progress-title"><span id="progressText">מתחיל…</span><span id="progressPct">0%</span></div>
-      <div class="progress"><div id="progressBar"></div></div>
-    </div>
-  </section>
+      <article class="dash-panel upload-panel" id="upload">
+        <div class="panel-heading"><div><h2>העלאת תלושים ודוחות נוכחות</h2><p>מעלים את כל הקבצים יחד, בכל סדר</p></div><span class="panel-mark violet-mark">↥</span></div>
+        <div class="upload-drop" id="uploadDrop">
+          <div class="file-illustrations"><span class="file-illus pdf">PDF</span><span class="file-illus xls">JPG</span><span class="file-illus img">IMG</span></div>
+          <label class="gradient-btn upload-button">בחר קבצים להעלאה<input id="payFiles" type="file" accept="application/pdf,image/*" multiple></label>
+          <small>PDF ותמונות; ניתן לגרור גם לכאן</small>
+        </div>
+        <label class="attendance-action">⌁ הוספת דוחות נוכחות בנפרד<input id="attFiles" type="file" accept="application/pdf,image/*" multiple></label>
+        <div class="file-lists"><div id="payList"></div><div id="attList"></div></div>
+        <button id="analyzeBtn" class="primary analyze-action">נתח את הקבצים ←</button>
+        <div id="progressWrap" class="hidden"><div class="progress-title"><span id="progressText">מתחיל…</span><span id="progressPct">0%</span></div><div class="progress"><div id="progressBar"></div></div></div>
+        <div class="private-import">
+          <label for="historyImport">יש לך קובץ היסטוריה? ייבוא מקומי ומאובטח</label>
+          <input type="file" id="historyImport" accept=".json,application/json">
+          <p id="historyImportStatus" role="status" class="muted-note">קובצי היסטוריה אינם נשלחים לשרת.</p>
+        </div>
+      </article>
+    </section>
 
-  <section id="autoProfileSection" class="card hidden">
-    <div class="section-head">
-      <div>
-        <div class="eyebrow dark">AUTO DETECTED</div>
-        <h2>נתוני שכר שזוהו מהתלוש</h2>
-        <p class="small">הנתונים מוצגים לצורך שקיפות. הם נקראים מהתלושים שהועלו ולא נשמרים במאגר עובדים.</p>
-      </div>
-      <span class="local-pill">מהתלוש בלבד</span>
-    </div>
-    <div id="autoProfile" class="metrics profile-metrics"></div>
-  </section>
+    <section class="dashboard-grid insight-grid">
+      <article class="dash-panel history-panel" id="history">
+        <div class="panel-heading"><div><h2>התקדמות אישית לאורך השנים</h2><p>שכר לשעה, ברוטו, נטו ושינויים בתנאים</p></div><span class="panel-mark blue-mark">↗</span></div>
+        <div class="history-controls" role="group" aria-label="בחירת נתון היסטורי">
+          <button type="button" class="history-tab chosen" data-series="hourly">שכר לשעה</button>
+          <button type="button" class="history-tab" data-series="gross">ברוטו</button>
+          <button type="button" class="history-tab" data-series="net">נטו</button>
+          <button type="button" class="history-tab" data-series="oncall">כוננויות</button>
+          <button type="button" class="history-tab" data-series="base">שכר יסוד</button>
+          <button type="button" class="history-tab" data-series="extra">עבודה נוספת</button>
+          <button type="button" class="history-tab" data-series="additions">תוספות</button>
+        </div>
+        <div id="historyChart" class="chart-wrap history-chart"><p class="chart-empty">יש לטעון את התלושים ההיסטוריים כדי להציג מגמה אמיתית.</p></div>
+        <div class="history-minis"><div><small>תחילת התקופה במסמכים</small><strong id="startWage">—</strong></div><div><small>תלוש אחרון</small><strong id="latestWage">—</strong></div><div><small>שינוי בין תאריכים מאומתים</small><strong id="wageChange">—</strong></div></div>
+        <p class="chart-foot" id="historyFoot">הנתון הראשוני שציינת, כ־35.8 ₪, לא יוצג כנתון מאומת עד שנמצא את תלוש המקור.</p>
+      </article>
 
-  <section id="resultsSection" class="hidden">
-    <div class="result-title">
-      <div>
-        <div class="eyebrow dark">RESULTS</div>
-        <h2>תוצאות לפי חודש</h2>
-      </div>
-      <div class="result-actions">
-        <button id="copyBtn" class="secondary">העתק סיכום</button>
-        <button id="requestBtn" class="primary compact">הכן פנייה למחלקת שכר</button>
-      </div>
-    </div>
-    <div id="typeSummary"></div>
-    <div id="overall" class="overall"></div>
-    <div id="payrollGuard"></div>
-    <div id="taxAnalysis"></div>
-    <div id="monthResults"></div>
-  </section>
+      <article class="dash-panel findings-panel" id="findings">
+        <div class="panel-heading"><div><h2>רכיבים חוזרים שמחייבים בדיקה</h2><p>תלוש מול תלוש, ורק על בסיס מסמכים</p></div><span class="panel-mark blue-mark">◈</span></div>
+        <div id="findingList" class="finding-list"><p class="chart-empty">לא הועלו עדיין מספיק תלושים להשוואה.</p></div>
+        <button id="viewFindings" class="text-action">לכל ממצאי הבדיקה ←</button>
+      </article>
 
-  <section id="requestSection" class="card hidden">
-    <div class="section-head">
-      <div><div class="eyebrow dark">READY TO COPY</div><h2>פנייה מוכנה לבדיקה</h2></div>
-      <button id="copyRequestBtn" class="primary compact">העתק פנייה</button>
-    </div>
-    <textarea id="requestText" class="request-text" rows="10" readonly></textarea>
-    <p class="small">העובד שולח את הפנייה בעצמו דרך אפליקציית העירייה. האפליקציה הזו אינה שולחת מידע למחלקת השכר.</p>
-  </section>
+      <article class="dash-panel overtime-panel" id="attendance">
+        <div class="panel-heading"><div><h2>ניתוח שעות נוספות</h2><p>חלוקה לפי התלושים שנבדקו</p></div><span class="panel-mark violet-mark">◷</span></div>
+        <div id="overtimeChart" class="overtime-content"><p class="chart-empty">הנתונים יוצגו לאחר הבדיקה.</p></div>
+      </article>
+    </section>
 
-  <section id="reviewSection" class="card hidden">
-    <details>
-      <summary><b>בדיקת נתונים ידנית</b> — רק אם מסמך לא נקרא טוב</summary>
-      <p class="small">אין צורך להזין תנאי עבודה. כאן אפשר רק לתקן נתון שה־OCR קרא לא נכון.</p>
-      <div id="reviewRows"></div>
-      <button id="recalcBtn" class="secondary wide">חשב מחדש</button>
-    </details>
-  </section>
+    <section class="dashboard-grid bottom-grid">
+      <article class="dash-panel process-panel" id="payroll">
+        <div class="panel-heading"><div><h2>תוצאות הבדיקה המפורטות</h2><p>ראיות, התאמת חודשים וממצאים לאימות</p></div><span class="panel-mark blue-mark">▤</span></div>
+        <div id="resultsSection" class="hidden">
+          <div class="result-title"><div><h3>ניתוח תלושים ונוכחות</h3></div><div class="result-actions"><button id="copyBtn" class="secondary compact">העתק סיכום</button><button id="requestBtn" class="primary compact">הכן פנייה</button></div></div>
+          <div id="typeSummary"></div><div id="overall" class="overall"></div>
+          <details id="guardDetails" open><summary>כל בדיקות Payroll Guard</summary><div id="payrollGuard"></div></details>
+          <details id="tax" open><summary>מיסוי והפרשות</summary><div id="taxAnalysis"></div></details>
+          <details id="monthlyDetails" open><summary>התאמות תלוש לדוח נוכחות</summary><div id="monthResults"></div></details>
+        </div>
+        <p id="resultsPlaceholder" class="chart-empty">העלה מסמכים כדי להפעיל את תשע בדיקות המנוע.</p>
+      </article>
 
-  <section class="card disclaimer">
-    <b>חשוב:</b>
-    <span>התוצאה היא כלי עזר לאיתור פערים אפשריים, לא קביעה משפטית או חשבונאית. המערכת בודקת גם רכיבים משתנים בין תלושים וגם שעות 125% / 150% / 175% / 200% בחיבור חודש העבודה לתלוש העוקב; רכיב שנעלם עשוי להיות מוסבר בחופשה, שינוי שיבוץ או תשלום מאוחר, ולכן מסומן לבירור ולא נקבע אוטומטית כחוסר שכר.</span>
-  </section>
-</main>
-<script type="module" src="app-v7.js?v=25"></script>
-</body>
-</html>
+      <article class="dash-panel integrity-panel">
+        <div class="panel-heading"><div><h2>אימות ואיכות הנתונים</h2><p>מה אומת ומה עדיין דורש ראיות</p></div><span class="panel-mark teal-mark">◉</span></div>
+        <div id="integrityList" class="integrity-list">
+          <p>◯ קליטת תלושים</p><p>◯ שיוך דוחות לחודש העוקב</p><p>◯ בדיקת רכיבים חודשיים</p>
+        </div>
+        <section id="autoProfileSection" class="hidden auto-profile"><h3>נתוני השכר שזוהו</h3><div id="autoProfile" class="metrics profile-metrics"></div></section>
+      </article>
+
+      <article class="dash-panel letter-panel" id="letter">
+        <div class="panel-heading"><div><h2>בקשה מוכנה לבירור שכר</h2><p>ניסוח על סמך ממצאי המנוע</p></div><span class="panel-mark violet-mark">▧</span></div>
+        <p>מכתב ברור שמתאר מה דורש בדיקה, בלי לקבוע חוב שלא הוכח.</p>
+        <button id="letterShortcut" class="gradient-btn" disabled>הצג מכתב בדיקה</button>
+        <section id="requestSection" class="hidden"><textarea id="requestText" class="request-text" rows="7" readonly aria-label="נוסח הבקשה"></textarea><button id="copyRequestBtn" class="secondary compact">העתק נוסח</button></section>
+      </article>
+    </section>
+
+    <section class="dash-panel review-panel hidden" id="reviewSection"><details><summary>בדיקת נתונים ידנית במקרה של קריאה לא ודאית</summary><div id="reviewRows"></div><button id="recalcBtn" class="secondary">חשב מחדש</button></details></section>
+    <p class="legal-foot">כל נתוני המסמכים מעובדים בדפדפן, ללא שליחה לשרת. הממצאים הם איתות לבירור בלבד; קביעת חוב דורשת אימות תנאי העסקה וזכאות בפועל.</p>
+  </main>
+</div>
+<script type="module" src="dashboard.mjs?v=1"></script>
+<script type="module" src="app-v7.js?v=28"></script>
+</body></html>

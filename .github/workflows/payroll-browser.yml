@@ -5,7 +5,11 @@ on:
       - "app-v7.js"
       - "payroll-trends.mjs"
       - "index.html"
+      - "dashboard.css"
+      - "dashboard.mjs"
       - "tests/payroll-browser.e2e.mjs"
+      - "tests/dashboard-history.e2e.mjs"
+      - "tests/dashboard-48-months.e2e.mjs"
       - ".github/workflows/payroll-browser.yml"
   workflow_dispatch:
 permissions:
@@ -27,3 +31,12 @@ jobs:
           python3 -m http.server 8765 >/tmp/payroll-http.log 2>&1 &
           sleep 2
           CHROME_PATH="$CHROME_PATH" node tests/payroll-browser.e2e.mjs
+          CHROME_PATH="$CHROME_PATH" node tests/dashboard-history.e2e.mjs
+          CHROME_PATH="$CHROME_PATH" node tests/dashboard-48-months.e2e.mjs
+      - name: Upload anonymous UI screenshots for visual QA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-qa-screens
+          path: /tmp/payroll-screens/*.png
+          if-no-files-found: ignore
