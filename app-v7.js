@@ -970,7 +970,9 @@ function parse(kind,text,file){
     }
   }
   const vs=OT.map(o=>d[o.k]).filter(Number.isFinite);
-  d.otTotal=vs.length?vs.reduce((a,b)=>a+b,0):null;
+  // Use rounded per-component minutes for displayed totals: decimal-hour payroll
+  // quantities otherwise cause a one-minute inconsistency between rows and sums.
+  d.otTotal=vs.length?vs.reduce((minutes,h)=>minutes+Math.round(h*60),0)/60:null;
   if(d.month!=="לא זוהה")d.confidence+=15;
   d.confidence+=Math.min(35,vs.length*9);
   if(kind==="payslip"&&d.hourly)d.confidence+=10;
