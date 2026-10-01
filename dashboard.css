@@ -35,3 +35,6 @@ svg text{font-family:Heebo,Arial,sans-serif}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.nav-item{transition:none}}
 
 @media(min-width:1251px){.insight-grid .history-panel{grid-column:3;grid-row:1}.insight-grid .findings-panel{grid-column:2;grid-row:1}.insight-grid .overtime-panel{grid-column:1;grid-row:1}}
+
+/* Override the previous single-column application's global main width. */
+.dashboard-main{max-width:none!important;width:100%!important;margin:0!important}
