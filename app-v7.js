@@ -136,6 +136,60 @@ function attendancePdfTotals(items,width,height){
 }
 // Some report headings contain visibly printed month text NOT exposed via the
 // PDF text layer. OCR only this tiny, isolated heading without the report date.
+
+// Cross-check unreadable/outlined PDF report-month digits against independent
+// date evidence: document print date + weekday on day 1 + days printed on
+// calendar. A print date is only an upper bound, NEVER the work month.
+function attendanceCalendarCandidates(items,width,height,lookback=20){
+  const factor=width/595,rows=[];
+  for(const item of items||[]){
+    const x=Number(item.transform?.[4]),y=Number(item.transform?.[5]),value=String(item.str||"").trim();
+    if(!Number.isFinite(x)||!Number.isFinite(y)||!value)continue;
+    let r=rows.find(z=>Math.abs(z.y-y)<2);
+    if(!r){r={y,items:[]};rows.push(r)}
+    r.items.push({x:x/factor,value});
+  }
+  const header=rows.filter(r=>height-r.y>=5&&height-r.y<=24)
+    .flatMap(r=>r.items.filter(x=>x.x>=12&&x.x<=95).sort((a,b)=>a.x-b.x).map(x=>x.value));
+  const rawHeader=header.join("");
+  const dateMatch=rawHeader.match(/(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2})/);
+  if(!dateMatch)return {candidates:[],source:"no-generation-date"};
+  const printed=new Date(+dateMatch[3],+dateMatch[2]-1,+dateMatch[1]);
+  if(printed.getFullYear()!==+dateMatch[3]||printed.getMonth()!==+dateMatch[2]-1||
+     printed.getDate()!==+dateMatch[1])return {candidates:[],source:"invalid-generation-date"};
+  const dayRows=[];
+  for(const row of rows){
+    const top=height-row.y;
+    if(top<110||top>height*.66)continue;
+    const dayTokens=row.items.filter(x=>x.x>=567&&x.x<=581)
+      .map(x=>x.value.replace(/[|\\s]/g,"")).filter(x=>/^\d{1,2}$/.test(x));
+    if(dayTokens.length!==1)continue;
+    const day=Number(dayTokens[0]);
+    if(day<1||day>31)continue;
+    dayRows.push({day,items:row.items});
+  }
+  // Daily rows are contiguous from 1 through the calendar month's last day.
+  const day1=dayRows.filter(x=>x.day===1);
+  const maxDay=Math.max(0,...dayRows.map(x=>x.day));
+  if(day1.length!==1||maxDay<28||dayRows.length<maxDay-2)
+    return {candidates:[],source:"incomplete-calendar-grid"};
+  const wChars=day1[0].items.filter(x=>x.x>=541&&x.x<=566).sort((a,b)=>b.x-a.x)
+    .map(x=>x.value.replace(/[^אבגדהוש]/g,"")).join("");
+  // Hebrew weekdays: Sun=א, Mon=ב, Tue=ג, Wed=ד, Thu=ה, Fri=ו, Sat=ש.
+  const weekdays={א:0,ב:1,ג:2,ד:3,ה:4,ו:5,ש:6};
+  const dow=weekdays[wChars[0]];
+  if(!Number.isInteger(dow))return {candidates:[],source:"weekday-not-verified"};
+  const candidates=[];
+  for(let back=0;back<=lookback;back++){
+    const date=new Date(printed.getFullYear(),printed.getMonth()-back,1);
+    const count=new Date(date.getFullYear(),date.getMonth()+1,0).getDate();
+    if(date.getDay()!==dow||count!==maxDay)continue;
+    candidates.push(String(date.getMonth()+1).padStart(2,"0")+"/"+date.getFullYear());
+  }
+  return {candidates,source:"weekday-and-calendar-length",printed:
+    String(printed.getMonth()+1).padStart(2,"0")+"/"+printed.getFullYear()};
+}
+
 async function attendancePdfMonth(page){
   // The report period (e.g. 08/2026) is painted at PDF coordinates x=213..257,
   // y=8..23 and is NOT exposed in the PDF text layer. The old wide crop
@@ -183,7 +237,7 @@ async function ocrPdfPage(pg,fileName,pageNo,base,span){
 async function pdfText(file,base,span,kind){
   let p;try{p=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise}
   catch(err){throw new Error("PDF_OPEN_FAILED",{cause:err})}
-  const out=[],sums=[],months=[];
+  const out=[],sums=[],months=[],calendars=[];
   for(let i=1;i<=p.numPages;i++){
     const pb=base+span*((i-1)/p.numPages),ps=span/p.numPages;
     prog("קורא PDF: "+file.name+" — "+i+"/"+p.numPages,pb);
@@ -198,7 +252,11 @@ async function pdfText(file,base,span,kind){
     const classified=detectDocumentKind(txt);
     const monthly=tc&&classified.kind!=="payslip"?
       attendancePdfTotals(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]):null;
-    if(monthly)sums.push(monthly);
+    if(monthly){
+      sums.push(monthly);
+      const cal=attendanceCalendarCandidates(tc.items,pg.view[2]-pg.view[0],pg.view[3]-pg.view[1]);
+      if(cal.candidates.length)calendars.push(cal);
+    }
     if(monthly||classified.kind==="attendance"){
       // Exact numeric crop is reliable for the confirmed municipal report
       // template. Other layouts require a manually confirmed month.
@@ -211,8 +269,17 @@ async function pdfText(file,base,span,kind){
   }
   if(sums.length||months.length){
     const distinct=[...new Set(sums.map(x=>JSON.stringify(x.values)))];
-    const uniqueMonths=[...new Set(months)];
-    out.unshift("@@ATT_PDF_META "+JSON.stringify({month:uniqueMonths.length===1?uniqueMonths[0]:null,
+    const uniqueMonths=[...new Set(months)],cal=calendars.length===1?calendars[0]:null;
+    const visualMonth=uniqueMonths.length===1?uniqueMonths[0]:null;
+    // The calendar can disambiguate outlined text. If visual OCR and
+    // calendar evidence conflict, do not claim a month.
+    const conflict=Boolean(visualMonth&&cal&&cal.candidates.length&&!cal.candidates.includes(visualMonth));
+    const month=conflict?null:(visualMonth||(cal?.candidates.length===1?cal.candidates[0]:null));
+    const source=conflict?"conflicting-evidence":
+      (visualMonth&&cal?.candidates.includes(visualMonth)?"visual+calendar":
+      visualMonth?"visual-only":cal?.candidates.length===1?"calendar-unique":"unverified");
+    out.unshift("@@ATT_PDF_META "+JSON.stringify({
+      month,monthSource:source,monthCandidates:cal?.candidates||[],
       summary:distinct.length===1?sums[0]:null})+" @@");
   }
   return out.join("\n");
@@ -884,6 +951,8 @@ function parse(kind,text,file){
       try{
         const v=JSON.parse(m[1]);
         if(/^(0[1-9]|1[0-2])\/20\d{2}$/.test(v.month||""))d.month=v.month;
+        d.monthSource=v.monthSource||"unverified";
+        d.monthCandidates=Array.isArray(v.monthCandidates)?v.monthCandidates:[];
         if(v.summary?.method==="pdf-positioned-monthly-summary"&&
            OT.every(o=>Number.isFinite(v.summary.values?.[o.k]))){
           for(const o of OT)d[o.k]=v.summary.values[o.k];
@@ -905,7 +974,8 @@ function parse(kind,text,file){
   if(d.month!=="לא זוהה")d.confidence+=15;
   d.confidence+=Math.min(35,vs.length*9);
   if(kind==="payslip"&&d.hourly)d.confidence+=10;
-  if(kind==="attendance"&&d.verifiedAttendanceSummary)d.confidence=d.month==="לא זוהה"?80:96;
+  if(kind==="attendance"&&d.verifiedAttendanceSummary)
+    d.confidence=d.month==="לא זוהה"||d.monthSource==="visual-only"||d.monthSource==="conflicting-evidence"?80:96;
   return d;
 }
 function pairs(){
