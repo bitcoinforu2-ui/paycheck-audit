@@ -1122,9 +1122,20 @@ function render(){
     ' דוחות נוכחות'+(unresolved.length?' · '+unresolved.length+
     ' מסמכים שלא זוהו':'')+'. התאמת חודשים: דוח M ← תלוש M+1.</div>'+
     '<details><summary>בדוק אילו קבצים וחודשים זוהו</summary>'+
-    S.docs.map(d=>'<div class="data-row"><span>'+esc(d.fileName)+'</span><b>'+
-      (d.kind==="payslip"?"תלוש":d.kind==="attendance"?"נוכחות":"לא זוהה")+
-      ' · '+esc(d.month)+'</b></div>').join('')+'</details>';
+    S.docs.map(d=>{
+      const source=d.kind!=="attendance"?"":d.monthSource==="visual+calendar"?
+        "כותרת ולוח השנה":d.monthSource==="calendar-unique"?"לוח השנה":
+        d.monthSource==="calendar+unique-payslip"?"הצעה לפי לוח השנה ותלוש":
+        d.monthSource==="user-confirmed"?"אושר ידנית":
+        d.monthSource==="visual-only"?"כותרת בלבד":
+        d.monthSource==="conflicting-evidence"?"מקורות סותרים":"חודש לא אומת";
+      const candidates=d.kind==="attendance"&&d.month==="לא זוהה"&&d.monthCandidates?.length?
+        " · אפשרויות לפי הלוח: "+d.monthCandidates.join(", "):"";
+      return '<div class="data-row"><span>'+esc(d.fileName)+
+        (source?'<br><span class="small">'+esc(source+candidates)+'</span>':'')+
+        '</span><b>'+(d.kind==="payslip"?"תלוש":d.kind==="attendance"?"נוכחות":"לא זוהה")+
+        ' · '+esc(d.month)+'</b></div>';
+    }).join('')+'</details>';
 
   $("monthResults").innerHTML=ps.map(({a,p,fallback,lag,same})=>{
     const m=a&&a.month!=="לא זוהה"?a.month:(p?.month||"לא זוהה"),flags=[];
