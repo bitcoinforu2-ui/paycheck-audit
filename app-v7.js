@@ -1105,7 +1105,8 @@ function monthKey(mm){
 function render(){
   S.issues=[];S.questions=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
   const unresolved=S.docs.filter(d=>d.kind==="unknown");
-  if(unresolved.length)S.insufficient=true;
+  const undatedAttendance=S.docs.filter(d=>d.kind==="attendance"&&d.month==="לא זוהה");
+  if(unresolved.length||undatedAttendance.length)S.insufficient=true;
   const pays=S.docs.filter(d=>d.kind==="payslip");
   const rated=pays.filter(d=>Number.isFinite(d.hourly)).sort((a,b)=>monthKey(b.month)-monthKey(a.month));
   const rateDoc=rated[0]||null,rate=rateDoc?.hourly??null;
@@ -1140,7 +1141,15 @@ function render(){
   $("monthResults").innerHTML=ps.map(({a,p,fallback,lag,same})=>{
     const m=a&&a.month!=="לא זוהה"?a.month:(p?.month||"לא זוהה"),flags=[];
     let cls="warn",title="דורש בדיקה",gap=null;
-    if(!a){warn++;S.insufficient=true;title=unresolved.length?"שיוך דורש אימות":"אין דוח משויך";flags.push(["info","לתלוש "+(p?.month||"לא זוהה")+" דרוש דוח נוכחות "+(p?.month!=="לא זוהה"?shift(p.month,-1):"החודש הקודם")+". "+(unresolved.length?"יש "+unresolved.length+" קבצים שלא זוהו, וייתכן שאחד מהם מתאים. הצג את רשימת הקבצים ותקן במידת הצורך.":"לא אותר דוח מתאים בקבצים שזוהו.")+" אין מסקנה כספית."])}
+    if(!a){
+      warn++;S.insufficient=true;
+      title=unresolved.length||undatedAttendance.length?"חודש בדוח דורש אימות":"אין דוח משויך";
+      const reason=undatedAttendance.length?
+        "הועלו "+undatedAttendance.length+" דוחות נוכחות שחודש העבודה שלהם לא אומת. ייתכן שאחד מהם מתאים; ראה בדיקת נתונים ידנית.":
+        unresolved.length?"יש "+unresolved.length+" מסמכים שלא סווגו בוודאות; ראה פירוט הקבצים.":
+        "לא זוהה דוח תואם בקבצים שהועלו.";
+      flags.push(["info","לתלוש "+(p?.month||"לא זוהה")+" נחוץ דוח "+(p?.month!=="לא זוהה"?shift(p.month,-1):"החודש הקודם")+". "+reason+" אין לקבוע חוסר כספי."]);
+    }
     else if(!p){warn++;S.insufficient=true;title="אין תלוש משויך";flags.push(["info",a.month==="לא זוהה"?"לא זוהה חודש העבודה בדוח. יש לבחור את חודש העבודה בבדיקת נתונים ידנית.":"דוח "+a.month+" מחייב תלוש "+shift(a.month,1)+". לא נמצא תלוש מאומת מתאים; לא נוצר פער כספי."])}
     else{
       if(fallback)flags.push(["info","שיוך לפי סדר העלאה אינו מאומת ואינו בסיס למסקנה כספית."]);
@@ -1221,8 +1230,8 @@ function render(){
   const taxAudit=renderTaxAnalysis(pays);
   if(taxAudit.alerts)warn+=taxAudit.alerts;
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n");
-  const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים משמעותיים לבדיקה."}else if(S.insufficient){o.className="overall warn";o.textContent=unresolved.length?
-    "יש "+unresolved.length+" מסמכים שסוגם לא זוהה. בדוק את הזיהוי באזור הבדיקה הידנית.":
+  const o=$("overall");if(bad){o.className="overall bad";o.textContent="נמצאו פערים שדורשים בדיקה נוספת."}else if(S.insufficient){o.className="overall warn";o.textContent=unresolved.length||undatedAttendance.length?
+    "יש "+(unresolved.length+undatedAttendance.length)+" מסמכים שהסוג או חודש העבודה שלהם לא אומת. בדוק פירוט וזיהוי ידני.":
     "הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
   $("resultsSection").classList.remove("hidden");
   $("reviewRows").innerHTML=S.docs.map((d,i)=>{
