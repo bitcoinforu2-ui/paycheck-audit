@@ -295,78 +295,106 @@ function modeRounded(values){
   for(const [k,c] of m)if(c>n){best=Number(k);n=c}
   return best;
 }
+// Israeli employee 2026 rates: Bituach Leumi 1.04% / 7%, health 3.23% / 5.17%,
+// reduced threshold ₪7,703 and ceiling ₪51,910. Used ONLY to validate the
+// explicitly read NI and health amounts, never to assume a worker's tax status.
+function expectedEmployeeDeductions2026(gross){
+  const low=Math.min(Math.max(gross,0),7703);
+  const high=Math.min(Math.max(gross-7703,0),51910-7703);
+  return {ni:low*.0104+high*.07,health:low*.0323+high*.0517};
+}
+function incomeTaxFromSlip(lines,guard,month){
+  const s=guard?.summary, ni=guard?.ni, health=guard?.health;
+  const validCodes=["91003","91001","92041"].every(code=>
+    lines.some(line=>new RegExp("(^|[^0-9])"+code+"([^0-9]|$)").test(line)));
+  if(!s||!validCodes||!Number.isFinite(s.mandatoryDeductions)||
+     !Number.isFinite(ni)||!Number.isFinite(health)){
+    return {amount:null,verified:false,reason:"חסר פירוט מאומת של ניכויי החובה"};
+  }
+  // The municipal sample contains these three mandatory deductions. If another
+  // deduction is present, do not assert this residual equals income tax.
+  const tax=Math.round((s.mandatoryDeductions-ni-health)*100)/100;
+  if(tax<0||tax>s.mandatoryDeductions||tax>Math.max(10000,(guard.grossBL||0)*.5)){
+    return {amount:null,verified:false,reason:"סכומי ניכויי החובה אינם ניתנים לפירוק אמין"};
+  }
+  const year=Number(String(month).split("/")[1]);
+  const gross=guard?.grossBL;
+  if(year!==2026||!Number.isFinite(gross)||gross<1000){
+    return {amount:tax,verified:false,reason:"סכום המס מחושב בהפרש; טרם אומתו כל רכיבי ניכויי החובה"};
+  }
+  const expected=expectedEmployeeDeductions2026(gross);
+  // Allow small payroll rounding and a minor contemporaneous adjustment.
+  if(Math.abs(ni-expected.ni)>1||Math.abs(health-expected.health)>1){
+    return {amount:tax,verified:false,reason:"ביטוח לאומי או בריאות לא אומתו מול בסיס החיוב"};
+  }
+  return {amount:tax,verified:true,reason:null};
+}
 function taxMonthSeries(pays){
   const known=pays.filter(d=>d.month!=="לא זוהה").sort((a,b)=>monthKey(a.month)-monthKey(b.month));
   const byMonth=new Map(known.map(d=>[d.month,d]));
   return known.map(d=>{
-    let taxable=null,tax=null,effective=null,exact=false,reason=null;
-    const [mm]=d.month.split("/").map(Number);
     const prev=byMonth.get(shift(d.month,-1));
-    if(mm===1&&Number.isFinite(d.taxGrossYtd)&&Number.isFinite(d.incomeTaxYtd)){
-      taxable=d.taxGrossYtd;tax=d.incomeTaxYtd;
-    }else if(prev&&Number.isFinite(d.taxGrossYtd)&&Number.isFinite(prev.taxGrossYtd)&&Number.isFinite(d.incomeTaxYtd)&&Number.isFinite(prev.incomeTaxYtd)){
-      taxable=d.taxGrossYtd-prev.taxGrossYtd;
-      tax=d.incomeTaxYtd-prev.incomeTaxYtd;
-    }
-    if(Number.isFinite(taxable)&&Number.isFinite(tax)&&taxable>500&&tax>=0){
-      const raw=tax/taxable*100;
-      const gross=d.guard?.summary?.grossCurrent;
-      const grossMatch=!Number.isFinite(gross)||(taxable>=gross*.55&&taxable<=gross*1.65);
-      if(raw>=0&&raw<=45&&grossMatch){
-        effective=raw;exact=true;
-      }else{
-        reason=!grossMatch?"הפרש הברוטו המצטבר אינו תואם לברוטו החודשי שנקרא":"שיעור מחושב מחוץ לטווח האימות";
-      }
-    }else if(Number.isFinite(taxable)||Number.isFinite(tax)){
-      reason="נתוני המס המצטברים אינם מספיקים לחישוב אמין";
-    }
-    return {d,month:d.month,marginal:d.marginalTax,taxable,tax,effective,exact,reason};
+    const [mm]=d.month.split("/").map(Number);
+    // "Income tax annually for collection" is NOT actual withheld tax; never
+    // subtract that informational field to calculate monthly withholding.
+    let taxable=null;
+    if(mm===1&&Number.isFinite(d.taxGrossYtd))taxable=d.taxGrossYtd;
+    else if(prev&&Number.isFinite(d.taxGrossYtd)&&Number.isFinite(prev.taxGrossYtd))
+      taxable=Math.round((d.taxGrossYtd-prev.taxGrossYtd)*100)/100;
+    const actual=d.incomeTaxPeriod;
+    const currentGross=d.guard?.grossBL;
+    const grossMatch=Number.isFinite(currentGross)&&
+      Number.isFinite(taxable)&&taxable>500&&
+      Math.abs(taxable-currentGross)<=Math.max(1000,currentGross*.2);
+    const verified=Boolean(actual?.verified&&grossMatch);
+    const effective=verified?actual.amount/taxable*100:null;
+    const reason=verified?null:
+      (!actual?.verified?(actual?.reason||"מס הכנסה שנוכה לא אומת"):
+       "לא אותר בסיס חודשי מאומת למס מתוך הפרש נתוני המס המצטברים");
+    return {d,month:d.month,marginal:d.marginalTax,taxable:verified?taxable:null,
+      tax:actual?.amount??null,effective,verified,reason};
   });
 }
 function renderTaxAnalysis(pays){
   const el=$("taxAnalysis");if(!el)return {alerts:0,hasData:false};
   const series=taxMonthSeries(pays);
-  const marginalVals=series.map(x=>x.marginal).filter(Number.isFinite);
-  const effectiveVals=series.map(x=>x.effective).filter(Number.isFinite);
-  const marginalBase=modeRounded(marginalVals);
-  const effectiveBase=median(effectiveVals);
-  const effectiveThreshold=Number.isFinite(effectiveBase)?Math.max(1.5,Math.abs(effectiveBase)*.15):null;
-  let alerts=0;
+  const validRates=series.map(x=>x.effective).filter(Number.isFinite);
+  const marginalBase=modeRounded(series.map(x=>x.marginal).filter(Number.isFinite));
   const rows=series.map(x=>{
-    let status="ok",note="ללא חריגה בולטת";
-    if(Number.isFinite(x.marginal)&&Number.isFinite(marginalBase)&&Math.abs(x.marginal-marginalBase)>.05){
-      const dir=x.marginal>marginalBase?"גבוה":"נמוך";
-      status="warn";note="מס שולי "+dir+" מהשיעור הנפוץ ("+fmt(marginalBase)+"%)";alerts++;
-      S.issues.push({month:x.month,text:"אחוז המס השולי הוא "+fmt(x.marginal)+"% לעומת "+fmt(marginalBase)+"% ברוב התלושים. מומלץ לבדוק את הסיבה לשינוי."});
-    }
-    if(Number.isFinite(x.effective)&&Number.isFinite(effectiveBase)&&Math.abs(x.effective-effectiveBase)>=effectiveThreshold){
-      const dir=x.effective>effectiveBase?"גבוה יותר":"נמוך יותר";
-      status="warn";note="מס אפקטיבי "+dir+" משאר החודשים";
-      alerts++;
-      S.issues.push({month:x.month,text:"שיעור מס ההכנסה האפקטיבי הוא כ־"+fmt(x.effective)+"% לעומת חציון של כ־"+fmt(effectiveBase)+"% בחודשים שניתנים לחישוב מדויק. מומלץ לבדוק את השינוי."});
-    }
-    if(x.reason&&note==="ללא חריגה בולטת")note="מס אפקטיבי לא אומת: "+x.reason;
-    const eff=Number.isFinite(x.effective)?fmt(x.effective)+"%":"—";
-    const marg=Number.isFinite(x.marginal)?fmt(x.marginal)+"%":"—";
-    return '<div class="data-row"><span><b>'+esc(x.month)+'</b><br><span class="small">'+esc(note)+'</span></span><b>שולי '+marg+' · אפקטיבי '+eff+'</b></div>';
+    const previous=series.find(p=>p.month===shift(x.month,-1));
+    const changes=[];
+    if(previous&&Number.isFinite(x.marginal)&&Number.isFinite(previous.marginal)&&
+      x.marginal!==previous.marginal)
+      changes.push("שינוי במס השולי אינו הוכחה לשגיאה: יש לבדוק מדרגות מס וחישוב מצטבר");
+    if(previous&&Number.isFinite(x.effective)&&Number.isFinite(previous.effective)&&
+      Math.abs(x.effective-previous.effective)>1.5)
+      changes.push("שיעור המס האפקטיבי השתנה; ייתכן שהסיבה היא שינוי בשכר החייב");
+    if(x.reason)changes.push("לא ניתן לאמת שיעור אפקטיבי: "+x.reason);
+    if(!changes.length)changes.push(x.verified?"ניכוי ובסיס המס אומתו אריתמטית":"נתון חלקי בלבד");
+    return '<div class="data-row"><span><b>'+esc(x.month)+'</b><br><span class="small">'+
+      esc(changes.join(". "))+'</span></span><b>שולי '+
+      (Number.isFinite(x.marginal)?fmt(x.marginal)+"%":"—")+
+      ' · אפקטיבי '+(Number.isFinite(x.effective)?fmt(x.effective)+"%":"—")+
+      '</b></div>';
   }).join("");
-
-  const enough=series.length>=3;
-  const exactCount=effectiveVals.length;
-  const summary=series.length
-    ?'נבדקו '+series.length+' תלושי שכר. חישוב מס אפקטיבי מדויק זמין ב־'+exactCount+' חודשים רצופים.'
-    :'לא זוהו מספיק תלושי שכר לצורך בדיקת מס רב־חודשית.';
+  const exactCount=validRates.length;
   const baseline=(Number.isFinite(marginalBase)?'מס שולי נפוץ: '+fmt(marginalBase)+'%. ':'')+
-    (Number.isFinite(effectiveBase)?'חציון מס אפקטיבי: '+fmt(effectiveBase)+'%.':'');
-
-  el.innerHTML='<article class="month"><div class="month-head"><div><div class="month-name">בדיקת מס רב־חודשית</div><div class="small">'+esc(summary)+'</div></div><span class="badge '+(alerts?"warn":"ok")+'">'+(alerts?"חריגות מס לבדיקה":"ללא חריגה בולטת")+'</span></div>'+
-    '<div class="flags"><div class="flag info">'+esc(baseline||"המערכת משווה מס שולי ומס אפקטיבי כאשר הנתונים זמינים.")+'</div>'+
-    (!enough?'<div class="flag warn">למגמה אמינה מומלץ להעלות לפחות 3 תלושים, ועדיף 10–12 חודשים כפי שתוכנן.</div>':'')+
-    (exactCount<2?'<div class="flag info">למס אפקטיבי מדויק נדרשים תלושים רצופים וגם התאמה בין הפרש הברוטו המצטבר לברוטו החודשי. נתון שלא עובר אימות לא מוצג כאחוז.</div>':'')+
-    '</div><div class="side">'+rows+'</div></article>';
-  return {alerts,hasData:series.length>0};
+    (exactCount?'חציון מס אפקטיבי מחודשים מאומתים: '+fmt(median(validRates))+'%.':'');
+  el.innerHTML='<article class="month"><div class="month-head"><div>'+
+    '<div class="month-name">בדיקת מס רב־חודשית</div>'+
+    '<div class="small">נבדקו '+series.length+' תלושים; חישוב מס אפקטיבי מבוקר ב־'+exactCount+
+    ' חודשים. שינוי שיעור מס לבדו אינו יוצר התראת שכר.</div></div>'+
+    '<span class="badge ok">השוואה אינפורמטיבית</span></div>'+
+    '<div class="flags"><div class="flag info">'+esc(baseline||
+    "רק נתוני מס שנקראו ואומתו יוצגו כאחוז.")+'</div>'+
+    '<div class="flag info">בדיקת מס משפטית מלאה מחייבת הכנסה מצטברת, נקודות זיכוי,'+
+    ' אישורי תיאום מס, הפרשים והוראות המס החלות באותה שנת מס.</div></div>'+
+    '<div class="side">'+rows+'</div></article>';
+  // Income changes, marginal bracket changes and effective tax changes are
+  // informational. A warning requires an independently verified statutory
+  // calculation, not comparison to the median of other months.
+  return {alerts:0,hasData:series.length>0};
 }
-
 
 function mirroredNums(line){
   const xs=lineNums(line);
@@ -717,8 +745,8 @@ function parse(kind,text,file){
     // Multi-month tax audit fields.
     d.marginalTax=taxMarginalRate(lines);
     d.taxGrossYtd=taxLabeledAmount(lines,/ברוטו\s*למס\s*הכנסה/,{min:100,max:5000000,pick:"max"});
-    d.incomeTaxYtd=taxLabeledAmount(lines,/מס\s*הכנסה\s*שנתי\s*לגביה/,{min:0,max:2000000,pick:"max"});
     d.guard=extractPayrollGuard(clean,lines);
+    d.incomeTaxPeriod=incomeTaxFromSlip(lines,d.guard,d.month);
   }else{
     function durationToken(token){
       const raw=String(token||"").trim().replace(",",".");
