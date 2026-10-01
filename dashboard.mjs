@@ -18,7 +18,7 @@ function metricDoc(d,metric){
   if(metric==="net")return goodNum(d.guard?.summary?.net)?d.guard.summary.net:null;
   if(metric==="hourly")return goodNum(d.hourly)&&d.hourly>=10&&d.hourly<=250?d.hourly:null;
   if(metric==="oncall"){
-    const v=d.guard?.recurring?.find?.(r=>r.code==="4392")?.amount;
+    const v=goodNum(d.oncallPaidAmount)?d.oncallPaidAmount:d.guard?.recurring?.find?.(r=>r.code==="4392")?.amount;
     return goodNum(v)?v:null;
   }
   return null;
