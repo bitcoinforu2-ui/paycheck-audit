@@ -17,6 +17,9 @@ function metricDoc(d,metric){
   if(metric==="gross")return goodNum(d.guard?.summary?.grossCurrent)?d.guard.summary.grossCurrent:null;
   if(metric==="net")return goodNum(d.guard?.summary?.net)?d.guard.summary.net:null;
   if(metric==="hourly")return goodNum(d.hourly)&&d.hourly>=10&&d.hourly<=250?d.hourly:null;
+  if(metric==="base")return goodNum(d.guard?.summary?.baseSalary)?d.guard.summary.baseSalary:null;
+  if(metric==="extra")return goodNum(d.guard?.summary?.extraWork)?d.guard.summary.extraWork:null;
+  if(metric==="additions")return goodNum(d.guard?.summary?.additions)?d.guard.summary.additions:null;
   if(metric==="oncall"){
     const v=goodNum(d.oncallPaidAmount)?d.oncallPaidAmount:d.guard?.recurring?.find?.(r=>r.code==="4392")?.amount;
     return goodNum(v)?v:null;
