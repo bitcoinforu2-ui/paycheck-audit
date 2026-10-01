@@ -990,10 +990,14 @@ function parse(kind,text,file){
         if(Number.isFinite(m.base))inferredRates.push(m.base);
       }
     }
-    let on=metricFromRow(lines,"4392",explicitRate,1,null);
+    // On-call quantity and tariff can both satisfy amount = quantity * tariff.
+    // Anchor the on-call tariff to the regular rate inferred from verified OT rows
+    // when the separate hourly label is not present on the same PDF row.
+    const oncallRate=Number.isFinite(explicitRate)?explicitRate:median(inferredRates);
+    let on=metricFromRow(lines,"4392",oncallRate,1,null);
     if(!on){
       const oi=lines.findIndex(l=>/כוננ/.test(l));
-      if(oi>=0)on=metricFromNums(lineNums(lines.slice(Math.max(0,oi-2),Math.min(lines.length,oi+3)).join(" ")),explicitRate,1,[4392]);
+      if(oi>=0)on=metricFromNums(lineNums(lines.slice(Math.max(0,oi-2),Math.min(lines.length,oi+3)).join(" ")),oncallRate,1,[4392]);
     }
     if(on){
       d.oncall=on.q;d.oncallEvidence=on.source||"inferred";d.tariffs.oncall=on.tariff;
