@@ -975,7 +975,9 @@ function parse(kind,text,file){
   d.confidence+=Math.min(35,vs.length*9);
   if(kind==="payslip"&&d.hourly)d.confidence+=10;
   if(kind==="attendance"&&d.verifiedAttendanceSummary)
-    d.confidence=d.month==="לא זוהה"||d.monthSource==="visual-only"||d.monthSource==="conflicting-evidence"?80:96;
+    // A printed month verified by the calendar is stronger than an inferred
+    // month based only on weekdays and report-date bounds.
+    d.confidence=d.monthSource==="visual+calendar"||d.monthSource==="user-confirmed"?96:80;
   return d;
 }
 function resolveAttendanceMonths(){
@@ -1002,7 +1004,7 @@ function resolveAttendanceMonths(){
     a.month=candidate;
     a.monthSource="calendar+unique-payslip";
     a.monthProposed=true;
-    a.confidence=Math.min(a.confidence,88);
+    a.confidence=88;
   }
 }
 
