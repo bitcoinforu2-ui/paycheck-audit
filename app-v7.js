@@ -1218,16 +1218,18 @@ function render(){
   for(const d of attendanceDocs)if(d.month!=="לא זוהה")
     attendanceCounts.set(d.month,(attendanceCounts.get(d.month)||0)+1);
   const repeatedMonths=[...attendanceCounts].filter(([,n])=>n>1);
+  const unidentifiedAttendance=attendanceDocs.filter(d=>d.month==="לא זוהה");
   const proposedMonths=attendanceDocs.filter(d=>d.monthProposed);
   const coverageHelp=[
     ...coverage.notPaired.map(x=>"תלוש "+x.payMonth+": נדרש לאתר או לזהות דוח עבודה "+x.expectedWorkMonth),
     ...coverage.needsVerification.map(x=>"תלוש "+x.payMonth+": דוח העבודה "+x.expectedWorkMonth+" זוהה אך נדרש אימות"),
     ...coverage.ambiguous.map(x=>"תלוש "+x.payMonth+": נמצאו מסמכים שאינם מאפשרים שיוך חד־משמעי")
   ];
-  const coverageAlert=coverageHelp.length||repeatedMonths.length||proposedMonths.length?
+  const coverageAlert=coverageHelp.length||repeatedMonths.length||proposedMonths.length||unidentifiedAttendance.length?
     '<div class="flag info"><strong>מה נדרש להשלמת הבדיקה</strong>'+
     '<div>נקלטו '+attendanceDocs.length+' דוחות, אך זוהו '+attendanceCounts.size+
     ' חודשי עבודה שונים. ספירת קבצים אינה ספירת חודשים.</div>'+
+    (unidentifiedAttendance.length?'<div>'+unidentifiedAttendance.length+' דוחות נוכחות עדיין ללא חודש עבודה מאומת; פתח את בדיקת הנתונים הידנית.</div>':'')+
     (repeatedMonths.length?'<div>מספר דוחות משויכים לאותו חודש, ויש לבדוק גרסאות: '+
       repeatedMonths.map(([mm,n])=>esc(mm)+' ('+n+')').join(', ')+'</div>':'')+
     (proposedMonths.length?'<div>'+proposedMonths.length+' חודשי דוח הוצעו אוטומטית ועדיין דורשים אישור.</div>':'')+
