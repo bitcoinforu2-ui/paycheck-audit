@@ -30,6 +30,7 @@
       <button class="nav-item" data-nav="findings"><span class="nav-ic">⚠</span>ממצאים וחריגות</button>
       <button class="nav-item" data-nav="monthly"><span class="nav-ic">▥</span>השוואות חודשיות</button>
       <button class="nav-item" data-nav="history"><span class="nav-ic">⌁</span>ההיסטוריה שלי</button>
+      <button class="nav-item" data-nav="peers"><span class="nav-ic">◫</span>השוואת עמיתים בהסכמה</button>
       <button class="nav-item" data-nav="tax"><span class="nav-ic">◉</span>מיסוי והפרשות</button>
       <button class="nav-item" data-nav="letter"><span class="nav-ic">✉</span>מכתבים ומסמכים</button>
     </nav>
@@ -106,6 +107,32 @@
         <div class="panel-heading"><div><h2>ניתוח שעות נוספות</h2><p>חלוקה לפי התלושים שנבדקו</p></div><span class="panel-mark violet-mark">◷</span></div>
         <div id="overtimeChart" class="overtime-content"><p class="chart-empty">הנתונים יוצגו לאחר הבדיקה.</p></div>
       </article>
+    </section>
+
+    <section class="dash-panel peer-panel" id="peers" aria-label="מחקר שכר בהסכמה">
+      <div class="panel-heading"><div><h2>השוואת שכר עם עמיתים — בהרשאה</h2>
+        <p>ניסוי מקומי: אין שליחה אוטומטית, מעקב עובדים או שרת משותף</p></div><span class="panel-mark teal-mark">◫</span></div>
+      <p class="muted-note">כל עובד בוחר בעצמו אם ליצור קובץ השוואה ולמי לשלוח אותו. הקובץ מכיל סכומים מדויקים לפי חודש, ולכן אינו אנונימי בקבוצה קטנה, גם ללא שם. האפליקציה לא אוספת הסכמות בשרת ולא שולחת קבצים אוטומטית. המקבל רשאי להשתמש בקובץ להשוואה וללמידת לוגיקת המנוע בלבד, לפי ההסכמה. אל תעביר נתונים של אדם אחר ללא רשותו.</p>
+      <div class="peer-controls">
+        <label>תקופה לייצוא
+          <select id="peerExportRange"><option value="latest12">12 התלושים האחרונים</option><option value="all">כל ההיסטוריה שנקראה</option></select>
+        </label>
+        <label>האם התפקיד דומה לתפקיד שאר המשתתפים?
+          <select id="peerRole"><option value="unknown">לא ידוע / לא צוין</option><option value="similar">תפקיד דומה</option><option value="different">תפקיד שונה</option></select>
+        </label>
+        <label class="peer-consent"><input type="checkbox" id="peerConsent"> אני מסכים/ה מרצוני לייצר ולשתף עם מי שאבחר קובץ הכולל נתוני שכר חודשיים מדויקים, לצורך השוואת שכר ולמידה שתשפר את בדיקות מנוע השכר. אני מבין/ה שגם ללא שם אפשר לזהות אותי בקבוצה קטנה; הקובץ לא נשלח אוטומטית ויש לשלוח אותו באופן יזום. אינני חייב/ת להשתתף, ואפשר לבקש ממקבל הקובץ למחוק אותו, אך אין דרך להבטיח מחיקה של עותקים שכבר נשלחו.</label>
+        <button class="primary compact" id="peerExportBtn" type="button" disabled>ייצוא קובץ השוואה אישי</button>
+        <small id="peerExportStatus" role="status">לא נוצר קובץ. תלושים מקוריים, פרטים מזהים ופרטי מס אינם מיוצאים.</small>
+      </div>
+      <div class="peer-import">
+        <h3>השוואה מקומית של קבצים שהתקבלו בהסכמה</h3>
+        <label>בחר קובצי השוואה שהעמיתים יצרו בעצמם
+          <input id="peerFiles" type="file" accept=".json,application/json" multiple>
+        </label>
+        <p id="peerImportStatus" role="status" class="muted-note">קובצי העמיתים יישארו בזיכרון הדפדפן הנוכחי בלבד. אין שמירה או שליחה לשרת.</p>
+        <button id="peerClearBtn" class="secondary compact" type="button">נקה נתוני עמיתים מהמסך</button>
+        <div id="peerComparison" class="peer-comparison" aria-live="polite"><p class="chart-empty">לא נטענו קובצי השוואה.</p></div>
+      </div>
     </section>
 
     <section class="dashboard-grid bottom-grid">

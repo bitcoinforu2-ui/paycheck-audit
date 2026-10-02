@@ -1,3 +1,4 @@
+import {createPeerExport,parsePeerExport,comparableMonths,difference} from "./peer-comparison.mjs";
 // Dark dashboard presentation ONLY. The existing app-v7.js remains the audit engine.
 // No sample monetary findings, confidence scores or recovery amounts are fabricated.
 const $=id=>document.getElementById(id);
@@ -11,6 +12,7 @@ const idText=m=>/^(0[1-9]|1[0-2])\/20\d{2}$/.test(m||"")?m:"לא ידוע";
 const legendColor={gross:"#9a4ffe",net:"#2dbeff",hourly:"#985dfd",oncall:"#36e0ba"};
 let state={docs:[],findings:[],issues:[],pairs:[],coverage:null};
 let historySeries="hourly";
+let peerRecords=[];
 const getDocs=()=>[...new Map(state.docs.filter(d=>d.kind==="payslip"&&asIndex(d.month)!==null)
   .map(d=>[d.month,d])).values()].sort((a,b)=>asIndex(a.month)-asIndex(b.month));
 function metricDoc(d,metric){
@@ -116,7 +118,45 @@ function renderOvertime(){
    return '<circle cx="80" cy="80" r="'+r+'" fill="none" stroke="'+d.color+'" stroke-width="22" stroke-dasharray="'+length+' '+(c-length)+'" stroke-dashoffset="'+(-start)+'" transform="rotate(-90 80 80)"/>';}).join("");
  $("overtimeChart").innerHTML='<div class="donut-wrap"><svg viewBox="0 0 160 160" role="img" aria-label="התפלגות שעות נוספות"><circle cx="80" cy="80" r="61" stroke="#19395c" stroke-width="22" fill="none"/>'+arcs+'</svg><div class="donut-label">'+total.toFixed(1)+'<small>שעות שנקראו</small></div></div><div class="overtime-legend">'+hours.map(d=>'<p><i class="dot" style="background:'+d.color+'"></i>'+d.label+' — '+d.value.toFixed(1)+'</p>').join("")+'</div>';
 }
-function draw(){renderKpis();plotBars();plotHistory();renderFindings();renderOvertime()}
+function exportIsReady(){
+ return Boolean($("peerConsent")?.checked&&getDocs().some(d=>Number.isFinite(d.hourly)||Number.isFinite(d.guard?.summary?.grossCurrent)));
+}
+function renderPeerComparison(){
+ const target=$("peerComparison");if(!target)return;
+ if(!peerRecords.length){target.innerHTML='<p class="chart-empty">לא נטענו קובצי השוואה. זהו כלי השוואה מקומי ואינו אוסף נתונים מעובדים אחרים.</p>';return}
+ const my=createPeerExport(state.docs,{scope:"all"});
+ const common=comparableMonths(my,peerRecords);
+ const counts=peerRecords.map((p,i)=>"עמית "+(i+1)+": "+p.months.length+" חודשים").join(" · ");
+ if(!common.length){
+  target.innerHTML='<p class="muted-note">נקלטו '+counts+', אבל אין כרגע חודש תלוש שמופיע אצל כולם. לא ניתן לבצע השוואה חודשית ישירה.</p>';
+  return;
+ }
+ const cells=(r,label)=>'<tr><td>'+esc(r.month)+'</td><td>'+esc(label)+'</td>'+
+   [r.hourly,r.gross,r.extraWork,r.oncallPaidAmount].map((v,i)=>
+    '<td>'+(Number.isFinite(v)?Number(v).toLocaleString("he-IL",{maximumFractionDigits:2})+(i===0?" ₪/שעה":" ₪"):"לא נקרא")+'</td>').join("")+'</tr>';
+ const selected=common.slice(0,6);
+ const months=selected.map(x=>{
+   const rows=[cells(x.mine,"הנתונים שלי")];
+   x.others.forEach((p,i)=>rows.push(cells(p,"עמית "+(i+1))));
+   const comparisons=x.others.map((p,i)=>{
+    const n=difference(x.mine.hourly,p.hourly);
+    return n!==null?'פער שעתי מול עמית '+(i+1)+': '+(n>0?"+":"")+n.toLocaleString("he-IL",{maximumFractionDigits:2})+' ₪':null;
+   }).filter(Boolean).join(" · ");
+   return '<details class="peer-month"><summary>תלוש '+esc(x.month)+(comparisons?' · '+esc(comparisons):'')+'</summary>'+
+    '<div class="peer-table-wrap"><table class="peer-table"><thead><tr><th>חודש</th><th>משתתף</th><th>לשעה</th><th>ברוטו</th><th>עבודה נוספת</th><th>כוננויות</th></tr></thead><tbody>'+
+     rows.join("")+'</tbody></table></div></details>';
+ }).join("");
+ const roleNote=peerRecords.some(p=>p.role!=="similar")?
+  'חלק מהמשתתפים לא אישרו שמדובר בתפקיד דומה. אין להסיק מסקנות על שוויון זכאות. ':'';
+ target.innerHTML='<p class="muted-note">נקלטו '+counts+'. נמצאו '+common.length+' חודשי תלוש משותפים, מוצגים '+selected.length+' החודשים האחרונים.</p>'+
+  '<p class="muted-note">'+roleNote+'סכומי ברוטו מושפעים מהיקף משרה, ותק, דרגה, שעות נוספות, חופשה, החזרים ותיקונים רטרואקטיביים. הבדלי שכר הם שאלות לבירור, לא ראיה לחוב.</p>'+months;
+}
+function refreshPeerUI(){
+ $("peerExportBtn").disabled=!exportIsReady();
+ if(peerRecords.length)renderPeerComparison();
+}
+function draw(){renderKpis();plotBars();plotHistory();renderFindings();renderOvertime();refreshPeerUI()}
+
 window.addEventListener("paycheck:dashboard-data",event=>{
  const d=event.detail||{};state={docs:Array.isArray(d.docs)?d.docs:[],
   findings:Array.isArray(d.findings)?d.findings:[],
@@ -127,7 +167,7 @@ window.addEventListener("paycheck:dashboard-data",event=>{
 });
 for(const item of document.querySelectorAll("[data-nav]")){
  item.onclick=()=>{
-  const target=$(item.dataset.nav),alias={findings:"findings",payroll:"payroll",monthly:"monthly",attendance:"attendance",tax:"tax",letter:"letter",history:"history",upload:"upload",home:"home"};
+  const target=$(item.dataset.nav),alias={findings:"findings",payroll:"payroll",monthly:"monthly",attendance:"attendance",tax:"tax",letter:"letter",history:"history",peers:"peers",upload:"upload",home:"home"};
   const node=$(alias[item.dataset.nav]);if(!node)return;
   if(item.dataset.nav==="tax")$("tax")?.setAttribute("open","");
   if(item.dataset.nav==="payroll")$("monthlyDetails")?.setAttribute("open","");
@@ -166,5 +206,46 @@ drop.ondrop=event=>{
  if(!files.length)return;
  const dt=new DataTransfer();files.forEach(f=>dt.items.add(f));
  $("payFiles").files=dt.files;$("payFiles").dispatchEvent(new Event("change",{bubbles:true}));
+};
+$("peerConsent").onchange=()=>refreshPeerUI();
+$("peerExportRange").onchange=()=>refreshPeerUI();
+$("peerExportBtn").onclick=()=>{
+ if(!exportIsReady()){alert("ייצוא דורש אישור מפורש ותלושי שכר שנקראו.");return}
+ try{
+  const pack=createPeerExport(state.docs,{scope:$("peerExportRange").value,role:$("peerRole").value});
+  const file=new Blob([JSON.stringify(pack,null,2)],{type:"application/json"});
+  const uri=URL.createObjectURL(file),link=document.createElement("a");
+  link.href=uri;link.download="peer-comparison-private.json";link.click();
+  URL.revokeObjectURL(uri);
+  $("peerExportStatus").textContent="נוצר קובץ לשיתוף יזום בלבד. הקובץ מכיל נתוני שכר מדויקים; שקול/י היטב למי למסור אותו.";
+ }catch(e){$("peerExportStatus").textContent="לא ניתן לייצא: "+String(e?.message||e)}
+};
+$("peerFiles").onchange=async event=>{
+ const files=[...(event.target.files||[])];event.target.value="";
+ if(!files.length)return;
+ const next=[],errors=[];
+ for(const f of files.slice(0,2)){
+  try{
+   if(f.size>1_000_000)throw Error("FILE_TOO_LARGE");
+   const payload=JSON.parse(await f.text());
+   next.push(parsePeerExport(payload));
+  }catch(e){errors.push("אחד הקבצים לא נקלט ("+String(e?.message||e)+")")}
+ }
+ peerRecords=next;
+ $("peerImportStatus").textContent=(next.length?"נטענו בהסכמה "+next.length+" קובצי השוואה לזיכרון זמני בלבד. ":"")+
+   (files.length>2?"בניסוי זה ניתן להשוות לכל היותר שני עמיתים בכל פעם. ":"")+
+   errors.join(" ");
+ if(next.length&&getDocs().length){
+  renderPeerComparison();
+ }else if(next.length){
+  $("peerComparison").textContent="קובצי העמיתים נקלטו; טען/י תחילה גם את תלושי השכר האישיים שלך.";
+ }else{
+  renderPeerComparison();
+ }
+};
+$("peerClearBtn").onclick=()=>{
+ peerRecords=[];$("peerFiles").value="";
+ $("peerImportStatus").textContent="נתוני העמיתים נוקו מהדפדפן הנוכחי.";
+ renderPeerComparison();
 };
 draw();

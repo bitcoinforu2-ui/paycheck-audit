@@ -43,3 +43,18 @@ svg text{font-family:Heebo,Arial,sans-serif}
 #historyImport{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important;pointer-events:none}
 .private-import>label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;border:1px solid #345b87;background:#122a4c;border-radius:8px;padding:7px 9px;color:#aadcfb;font-size:11px}
 .private-import>label::before{content:"⇧";font-size:14px}
+
+/* Peer research is strictly opt-in and never transmitted by the web app. */
+.peer-panel { margin:20px 0; }
+.peer-controls,.peer-import {display:grid;gap:12px;padding:12px 0;}
+.peer-controls>label {display:grid;gap:7px;font-size:.9rem;max-width:680px;}
+.peer-controls select,.peer-import input[type=file] {max-width:100%;padding:10px;border:1px solid #365379;border-radius:10px;background:#122743;color:#e7f0ff;}
+.peer-consent {display:flex!important;align-items:flex-start;gap:10px;line-height:1.6;}
+.peer-consent input {flex:0 0 auto;margin-top:5px;}
+.peer-table-wrap {overflow-x:auto;}
+.peer-table {border-collapse:collapse;min-width:510px;width:100%;font-size:.83rem;}
+.peer-table td,.peer-table th {padding:9px 10px;border-bottom:1px solid #344969;text-align:start;white-space:nowrap;}
+.peer-month {margin:9px 0;border:1px solid #354b6c;padding:12px;border-radius:12px;}
+.peer-month summary {cursor:pointer;line-height:1.6;}
+.peer-import h3 {font-size:1rem;}
+.peer-panel .primary:disabled {opacity:.45;cursor:not-allowed;}
