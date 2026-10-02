@@ -156,6 +156,7 @@ function renderPeerComparison(){
 function refreshPeerUI(){
  $("peerExportBtn").disabled=!exportIsReady();
  if(peerRecords.length)renderPeerComparison();
+ researchControls();
 }
 function draw(){renderKpis();plotBars();plotHistory();renderFindings();renderOvertime();refreshPeerUI()}
 
