@@ -89,6 +89,7 @@ try {
  assert.match(months,/06\/2026/);
  assert.match(months,/07\/2026/);
  assert.match(months,/08\/2026/);
+ assert.match(summary,/מה נדרש להשלמת הבדיקה/,"Unverified months must show an actionable coverage summary");
  assert.deepEqual(errors,[],"browser runtime should emit no JS errors");
  console.log("BROWSER_PASS: six file selection, recognition, three pairings, missing September on-call visible");
  console.log("BROWSER_SUMMARY:",summary.replace(/\s+/g," ").slice(0,300));
