@@ -132,4 +132,11 @@ export default {async fetch(req,env){
   // Do not log request bodies or details of employee financial data.
   return respond({error:"service_error"},503,headers);
  }
-}};
+ },
+ async scheduled(_event,env){
+  if(!env.RESEARCH_DB)return;
+  const cutoff=new Date(Date.now()-180*24*60*60*1000).toISOString();
+  await env.RESEARCH_DB.prepare(
+   "DELETE FROM research_contributions WHERE created_at<?").bind(cutoff).run();
+ }
+};
