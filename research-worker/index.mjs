@@ -69,7 +69,49 @@ async function revoke(req,env){
  await env.RESEARCH_DB.prepare("DELETE FROM research_contributions WHERE receipt_hash=?").bind(hash).run();
  return respond({ok:true,note:"Matching contribution, if any, deleted."});
 }
+// No individual submissions are retrievable through this API.
+// Operator-only summaries are withheld for cohorts smaller than 10
+// contributions (not verified distinct people). Small pilots remain local.
+async function adminSummary(req,env){
+ const auth=req.headers.get("authorization")||"";
+ if(!env.ADMIN_API_TOKEN||!env.RESEARCH_DB||
+  auth!=="Bearer "+env.ADMIN_API_TOKEN)return respond({error:"unauthorized"},401);
+ const result=await env.RESEARCH_DB.prepare(
+  "SELECT sample FROM research_contributions ORDER BY created_at DESC LIMIT 10000").all();
+ const cohorts=new Map();
+ for(const record of result.results||[]){
+  let p;try{p=JSON.parse(record.sample)}catch{continue}
+  if(!p||!Array.isArray(p.months)||!["similar","different","unknown"].includes(p.role))continue;
+  for(const m of p.months){
+   if(!validMonth(m.month))continue;
+   const key=m.month+":"+p.role;
+   if(!cohorts.has(key))cohorts.set(key,[]);
+   cohorts.get(key).push(m);
+  }
+ }
+ const published=[];
+ for(const [key,rows] of cohorts){
+  if(rows.length<10)continue; // No small-cohort disclosure.
+  const [month,role]=key.split(":");
+  const med=k=>{
+   const arr=rows.map(r=>r[k]).filter(Number.isFinite).sort((a,b)=>a-b);
+   if(arr.length<10)return null;
+   const n=arr.length;return n%2?arr[(n-1)/2]:(arr[n/2-1]+arr[n/2])/2;
+  };
+  published.push({month,role,contributions:rows.length,
+   hourlyBucketMedian:med("hourlyBucket"),grossBucketMedian:med("grossBucket"),
+   baseBucketMedian:med("baseBucket"),extraBucketMedian:med("extraBucket"),
+   additionBucketMedian:med("additionBucket"),oncallBucketMedian:med("oncallBucket")});
+ }
+ return respond({ok:true,minimumCohort:10,
+  warning:"Contribution count is not proof of unique workers; results are descriptive only.",
+  cohorts:published});
+}
 export default {async fetch(req,env){
+ const u=new URL(req.url);
+ if(u.pathname==="/v1/summary"&&req.method==="GET"){
+  try{return await adminSummary(req,env)}catch{return respond({error:"service_error"},503)}
+ }
  const origin=cleanOrigin(req.headers.get("origin"));
  // Cross-origin browser sharing is restricted; non-browser misuse still
  // requires Turnstile. No reading endpoints are publicly exposed.
@@ -78,7 +120,6 @@ export default {async fetch(req,env){
   return new Response(null,{status:204,headers:cors(origin)});
  }
  if(!origin)return respond({error:"origin_not_allowed"},403);
- const u=new URL(req.url);
  const headers=cors(origin);
  try{
   let result;
