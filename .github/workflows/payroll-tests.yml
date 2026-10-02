@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - "app-v7.js"
+      - "dashboard.mjs"
       - "payroll-trends.mjs"
       - "payroll-review.mjs"
       - "tests/**"
@@ -20,6 +21,8 @@ jobs:
           node-version: "22"
       - name: Check browser module syntax
         run: node --check --input-type=module < app-v7.js
+      - name: Check dashboard module syntax
+        run: node --check dashboard.mjs
       - name: Check trends module syntax
         run: node --check payroll-trends.mjs
       - name: Check review module syntax
