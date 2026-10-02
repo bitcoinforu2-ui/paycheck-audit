@@ -1334,7 +1334,7 @@ function render(){
   const taxAudit=renderTaxAnalysis(pays);
   if(taxAudit.alerts)warn+=taxAudit.alerts;
   S.report=ps.map(x=>(x.a?.month||x.p?.month||"לא זוהה")).join("\n")+
-    (S.issues.length?"\n\nנקודות לבדיקה:\n"+S.issues.map(x=>x.month+": "+x.text).join("\n"):"");
+    ((S.issues.length||S.questions.length)?"\n\nנקודות לבדיקה:\n"+buildPayrollInquiry(S.issues,S.questions,S.insufficient):"");
   const o=$("overall");if(S.variableFindings?.length){o.className="overall warn";o.textContent="אותרו רכיבי שכר משתנים שדורשים בירור בין תלושים. ייתכן שחלק מההצלבה מול נוכחות טרם אומת."}else if(bad){o.className="overall bad";o.textContent="נמצאו פערים שדורשים בדיקה נוספת."}else if(S.insufficient){o.className="overall warn";o.textContent=unresolved.length||undatedAttendance.length?
     "יש "+(unresolved.length+undatedAttendance.length)+" מסמכים שהסוג או חודש העבודה שלהם לא אומת. בדוק פירוט וזיהוי ידני.":
     "הקריאה חלקית — אין עדיין מספיק נתונים לקבוע אם יש התאמה או פער."}else if(warn){o.className="overall warn";o.textContent="יש נתונים שדורשים בדיקה או אימות."}else{o.className="overall ok";o.textContent="הנתונים שנקראו נראים תואמים."}
@@ -1370,7 +1370,7 @@ function render(){
       verifiedAttendanceSummary:d.verifiedAttendanceSummary,
       guard:d.guard?{summary:d.guard.summary,recurring:d.guard.recurring}:null
     })),
-    findings:S.variableFindings||[],issues:S.issues||[],
+    findings:S.variableFindings||[],issues:S.issues||[],coverage,
     pairs:ps.map(x=>({attendance:x.a?.month||null,payslip:x.p?.month||null}))
   }}));
 }
