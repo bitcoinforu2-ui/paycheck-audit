@@ -1208,7 +1208,7 @@ function render(){
     ["ערך שעה רגילה"+(rateDoc?.month&&rateDoc.month!=="לא זוהה"?" · "+rateDoc.month:""),rate!=null?"₪"+fmt(rate):"לא זוהה"],
     ["מקור ערך השעה",rateDoc?.hourlySource||"לא זוהה"],
     ["חודשי תלוש שנקראו",String(pays.filter(d=>d.month!=="לא זוהה").length)],
-    ["שמירת מסמכים","לא נשמרים במאגר"]
+    ["שמירת נתונים",S.archiveAvailable?"נתונים שפוענחו נשמרים בדפדפן זה; קובצי המקור אינם נשמרים":"שמירה מקומית לא זמינה; הנתונים זמניים בלבד"]
   ].map(([k,v])=>'<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
   $("autoProfileSection").classList.remove("hidden");
   const typeSummary=$("typeSummary");
