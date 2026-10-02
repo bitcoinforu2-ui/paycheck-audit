@@ -32,7 +32,7 @@ try{
   const data={format:"paycheck-history-v1",version:1,slips,attendance};
   await page.locator("#historyImport").setInputFiles({name:"anonymous-pack-"+batch+".json",
     mimeType:"application/json",buffer:Buffer.from(JSON.stringify(data))});
-  await page.waitForFunction(expected=>Number(document.getElementById("kpiPayslips")?.textContent)===expected,{timeout:20000},(batch+1)*12);
+  await page.waitForFunction(expected=>Number(document.getElementById("kpiPayslips")?.textContent)===expected,(batch+1)*12,{timeout:20000});
  }
  assert.equal(await page.locator("#kpiPayslips").innerText(),"120");
  assert.match(await page.locator("#kpiReports").innerText(),/120 דוחות/);
