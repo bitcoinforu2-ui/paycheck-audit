@@ -124,6 +124,20 @@
         <button class="primary compact" id="peerExportBtn" type="button" disabled>ייצוא קובץ השוואה אישי</button>
         <small id="peerExportStatus" role="status">לא נוצר קובץ. תלושים מקוריים, פרטים מזהים ופרטי מס אינם מיוצאים.</small>
       </div>
+      <div class="peer-import" id="researchSharePanel">
+        <h3>שיתוף אוטומטי למחקר — בהסכמה נפרדת</h3>
+        <p class="muted-note">אחרי חיבור מאובטח, אפשר לשתף נתונים נבחרים ומעוגלים לצורך למידת מנוע השכר. אין העברה אוטומטית של תלושים, מסמכי נוכחות, שמות או נתוני מס. הנתונים יישמרו בנפרד במאגר המחקר עד 180 יום לכל היותר, או יימחקו מוקדם יותר באמצעות קוד ביטול. מאחר שמספר המשתתפים קטן, אין הבטחה לאנונימיות.</p>
+        <label class="peer-consent"><input type="checkbox" id="researchConsent"> אני בוחר/ת להשתתף במחקר מרצוני ומסכים/ה להעברה ושמירה של מדדי שכר חודשיים מעוגלים, ותיאור כללי אם התפקיד דומה, לצורך השוואה ושיפור המנוע. אני מבין/ה שאפשר להפסיק ולבקש מחיקה באמצעות קוד הביטול שאקבל, ושהשיתוף אינו תנאי לשימוש באפליקציה.</label>
+        <div id="researchChallenge"></div>
+        <button type="button" id="researchContributeBtn" class="primary compact" disabled>שתף מדדים מעוגלים עם המנוע</button>
+        <p id="researchStatus" role="status" class="muted-note">המאגר המאובטח טרם חובר; לא נשלח מידע.</p>
+        <div class="peer-controls">
+          <label>קוד ביטול השתתפות
+            <input id="researchReceipt" type="text" autocomplete="off" placeholder="קוד המחיקה שקיבלת">
+          </label>
+          <button type="button" id="researchRevokeBtn" class="secondary compact" disabled>מחק את התרומה שלי מהמאגר</button>
+        </div>
+      </div>
       <div class="peer-import">
         <h3>השוואה מקומית של קבצים שהתקבלו בהסכמה</h3>
         <label>בחר קובצי השוואה שהעמיתים יצרו בעצמם
@@ -165,7 +179,7 @@
     </section>
 
     <section class="dash-panel review-panel hidden" id="reviewSection"><details><summary>בדיקת נתונים ידנית במקרה של קריאה לא ודאית</summary><div id="reviewRows"></div><button id="recalcBtn" class="secondary">חשב מחדש</button></details></section>
-    <p class="legal-foot">כל נתוני המסמכים מעובדים בדפדפן, ללא שליחה לשרת. הממצאים הם איתות לבירור בלבד; קביעת חוב דורשת אימות תנאי העסקה וזכאות בפועל.</p>
+    <p class="legal-foot">מסמכי המקור מעובדים בדפדפן ואינם נשלחים לשרת. רק עובד שבחר במפורש להשתתף במחקר יוכל לשתף מדדים חודשיים מעוגלים, ורק לאחר חיבור מאגר מחקר מאובטח. הממצאים הם איתות לבירור בלבד; קביעת חוב דורשת אימות תנאי העסקה וזכאות בפועל.</p>
   </main>
 </div>
 <script type="module" src="dashboard.mjs?v=2"></script>

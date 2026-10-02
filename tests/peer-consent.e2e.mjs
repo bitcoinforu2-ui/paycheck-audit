@@ -13,6 +13,8 @@ const sum={bank:12000,externalDeductions:600,officeDeductions:400,net:13000,mand
 const payload={format:"paycheck-history-v1",version:1,slips:[{month:"08/2026",hourly:50,ot125:4,ot150:5,ot175:1,ot200:2,oncall:8,oncallPaidAmount:400,summary:sum}],attendance:[]};
 try{
  await page.goto("http://127.0.0.1:8765/#peers",{waitUntil:"domcontentloaded"});
+ assert.equal(await page.locator("#researchContributeBtn").isDisabled(),true,"No sharing without backend and separate consent");
+ assert.match(await page.locator("#researchStatus").innerText(),/מאגר המחקר המאובטח עדיין בהכנה/);
  await page.locator("#historyImport").setInputFiles({name:"personal.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(payload))});
  await page.waitForFunction(()=>document.getElementById("kpiPayslips")?.textContent==="1",null,{timeout:15000});
  assert.equal(await page.locator("#peerExportBtn").isDisabled(),true);

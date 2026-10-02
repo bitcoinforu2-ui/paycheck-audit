@@ -1,4 +1,6 @@
 import {createPeerExport,parsePeerExport,comparableMonths,difference} from "./peer-comparison.mjs";
+import {toRoundedSample,researchReady} from "./research-client.mjs";
+import {RESEARCH_API_URL,RESEARCH_TURNSTILE_SITE_KEY} from "./research-config.mjs";
 // Dark dashboard presentation ONLY. The existing app-v7.js remains the audit engine.
 // No sample monetary findings, confidence scores or recovery amounts are fabricated.
 const $=id=>document.getElementById(id);
@@ -154,6 +156,7 @@ function renderPeerComparison(){
 function refreshPeerUI(){
  $("peerExportBtn").disabled=!exportIsReady();
  if(peerRecords.length)renderPeerComparison();
+ researchControls();
 }
 function draw(){renderKpis();plotBars();plotHistory();renderFindings();renderOvertime();refreshPeerUI()}
 
@@ -206,6 +209,75 @@ drop.ondrop=event=>{
  if(!files.length)return;
  const dt=new DataTransfer();files.forEach(f=>dt.items.add(f));
  $("payFiles").files=dt.files;$("payFiles").dispatchEvent(new Event("change",{bubbles:true}));
+};
+// This is intentionally opt-in, on demand and disabled until the private
+// research Worker and human-verification keys are provisioned.
+const researchOn=researchReady(RESEARCH_API_URL,RESEARCH_TURNSTILE_SITE_KEY);
+let turnstileResponse="";
+function researchControls(){
+ const optIn=Boolean($("researchConsent").checked);
+ $("researchContributeBtn").disabled=!(researchOn&&optIn&&turnstileResponse&&getDocs().length);
+ $("researchRevokeBtn").disabled=!researchOn||!$("researchReceipt").value.trim();
+}
+$("researchConsent").onchange=researchControls;
+$("researchReceipt").oninput=researchControls;
+if(researchOn){
+ const script=document.createElement("script");
+ script.src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+ script.async=true;script.defer=true;
+ script.onload=()=>{
+  if(!window.turnstile){$("researchStatus").textContent="לא ניתן להפעיל אימות אנושי כרגע.";return}
+  window.turnstile.render("#researchChallenge",{
+   sitekey:RESEARCH_TURNSTILE_SITE_KEY,
+   callback:token=>{turnstileResponse=token;researchControls()},
+   "expired-callback":()=>{turnstileResponse="";researchControls()},
+   "error-callback":()=>{turnstileResponse="";researchControls()}
+  });
+  $("researchStatus").textContent="מאגר מחקר מאובטח זמין. לא יישלח מידע ללא פעולה והסכמה מפורשות.";
+ };
+ script.onerror=()=>{$("researchStatus").textContent="אימות אנושי אינו זמין כרגע. לא נשלח מידע."};
+ document.head.append(script);
+}else{
+ $("researchStatus").textContent="מאגר המחקר המאובטח עדיין בהכנה; שיתוף אוטומטי מושבת. ניתן להמשיך להשתמש באפליקציה ולהפיק קובץ השוואה פרטי.";
+}
+$("researchContributeBtn").onclick=async()=>{
+ if(!researchOn||!$("researchConsent").checked||!turnstileResponse||!getDocs().length)return;
+ const btn=$("researchContributeBtn");btn.disabled=true;
+ try{
+  const packet=createPeerExport(state.docs,{scope:"all",role:$("peerRole").value});
+  const sample=toRoundedSample(packet);
+  // Separate consent for server storage; never reuse the private-file checkbox.
+  const body={consent:{version:1,purpose:"voluntary-peer-research",accepted:true},
+    sample,captcha:turnstileResponse};
+  const res=await fetch(RESEARCH_API_URL+"/v1/contribute",{
+   method:"POST",headers:{"content-type":"application/json"},
+   body:JSON.stringify(body),mode:"cors",credentials:"omit",referrerPolicy:"no-referrer"
+  });
+  const result=await res.json();
+  if(!res.ok||result?.ok!==true||!result?.receipt)throw Error(result?.error||"SHARE_FAILED");
+  $("researchReceipt").value=result.receipt;
+  $("researchStatus").textContent="השיתוף בוצע בהסכמתך. שמור/י את קוד הביטול המופיע מטה במקום פרטי; בלעדיו לא נוכל לזהות איזו תרומה למחוק.";
+  // This session may end without being recoverable: prompt participant
+  // to copy their revocation credential, do not send it elsewhere.
+  $("researchConsent").checked=false;turnstileResponse="";
+  window.turnstile?.reset();
+ }catch(e){
+  $("researchStatus").textContent="השיתוף לא אושר; אין להניח שהנתונים נשמרו. פירוט: "+String(e?.message||e);
+ }finally{researchControls()}
+};
+$("researchRevokeBtn").onclick=async()=>{
+ if(!researchOn)return;const receipt=$("researchReceipt").value.trim();
+ if(!receipt||!confirm("למחוק את התרומה שלך ממאגר המחקר?"))return;
+ $("researchRevokeBtn").disabled=true;
+ try{
+  const res=await fetch(RESEARCH_API_URL+"/v1/revoke",{method:"DELETE",
+    headers:{"content-type":"application/json"},body:JSON.stringify({receipt}),
+    credentials:"omit",mode:"cors",referrerPolicy:"no-referrer"});
+  if(!res.ok)throw Error("REVOCATION_NOT_CONFIRMED");
+  $("researchReceipt").value="";
+  $("researchStatus").textContent="נשלחה ואושרה בקשת מחיקה של התרומה התואמת לקוד. עותקים שכבר חולקו מחוץ למאגר אינם נמחקים מכאן.";
+ }catch(e){$("researchStatus").textContent="לא הצלחנו לאשר מחיקה. שמור/י את הקוד ונסה/י שוב."}
+ finally{researchControls()}
 };
 $("peerConsent").onchange=()=>refreshPeerUI();
 $("peerExportRange").onchange=()=>refreshPeerUI();

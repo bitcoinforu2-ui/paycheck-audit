@@ -3,6 +3,9 @@ on:
   push:
     paths:
       - "app-v7.js"
+      - "research-client.mjs"
+      - "research-config.mjs"
+      - "research-worker/**"
       - "dashboard.mjs"
       - "payroll-trends.mjs"
       - "payroll-review.mjs"
@@ -19,6 +22,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Check research Worker syntax
+        run: node --check research-worker/index.mjs
       - name: Check browser module syntax
         run: node --check --input-type=module < app-v7.js
       - name: Check dashboard module syntax
