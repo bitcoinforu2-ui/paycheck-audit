@@ -1246,6 +1246,7 @@ function render(){
     (coverage.ambiguous.length?'<div class="flag info">שיוך כפול או לא חד־משמעי בתלושים: '+coverage.ambiguous.map(c=>esc(c.payMonth)).join(', ')+'.</div>':'')+
     (!coverage.notPaired.length&&!coverage.needsVerification.length&&!coverage.ambiguous.length?'<div class="flag ok">כל חודשי התלוש שזוהו משויכים לדוח נוכחות מאומת.</div>':'')+
     '</details>'+
+    coverageAlert+
     '<details><summary>בדוק אילו קבצים וחודשים זוהו</summary>'+
     S.docs.map(d=>{
       const source=d.kind!=="attendance"?"":d.monthSource==="visual+calendar"?
