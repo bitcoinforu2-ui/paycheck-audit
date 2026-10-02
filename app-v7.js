@@ -1211,19 +1211,44 @@ function render(){
     ["שמירת נתונים",S.archiveAvailable?"נתונים שפוענחו נשמרים בדפדפן זה; קובצי המקור אינם נשמרים":"שמירה מקומית לא זמינה; הנתונים זמניים בלבד"]
   ].map(([k,v])=>'<div class="metric"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>').join("");
   $("autoProfileSection").classList.remove("hidden");
+  // Explain distinct work-month coverage separately from the count of uploaded
+  // files. Never report an unmatched payslip as an established missing report.
+  const attendanceDocs=S.docs.filter(d=>d.kind==="attendance");
+  const attendanceCounts=new Map();
+  for(const d of attendanceDocs)if(d.month!=="לא זוהה")
+    attendanceCounts.set(d.month,(attendanceCounts.get(d.month)||0)+1);
+  const repeatedMonths=[...attendanceCounts].filter(([,n])=>n>1);
+  const unidentifiedAttendance=attendanceDocs.filter(d=>d.month==="לא זוהה");
+  const proposedMonths=attendanceDocs.filter(d=>d.monthProposed);
+  const coverageHelp=[
+    ...coverage.notPaired.map(x=>"תלוש "+x.payMonth+": נדרש לאתר או לזהות דוח עבודה "+x.expectedWorkMonth),
+    ...coverage.needsVerification.map(x=>"תלוש "+x.payMonth+": דוח העבודה "+x.expectedWorkMonth+" זוהה אך נדרש אימות"),
+    ...coverage.ambiguous.map(x=>"תלוש "+x.payMonth+": נמצאו מסמכים שאינם מאפשרים שיוך חד־משמעי")
+  ];
+  const coverageAlert=coverageHelp.length||repeatedMonths.length||proposedMonths.length||unidentifiedAttendance.length?
+    '<div class="flag info"><strong>מה נדרש להשלמת הבדיקה</strong>'+
+    '<div>נקלטו '+attendanceDocs.length+' דוחות, אך זוהו '+attendanceCounts.size+
+    ' חודשי עבודה שונים. ספירת קבצים אינה ספירת חודשים.</div>'+
+    (unidentifiedAttendance.length?'<div>'+unidentifiedAttendance.length+' דוחות נוכחות עדיין ללא חודש עבודה מאומת; פתח את בדיקת הנתונים הידנית.</div>':'')+
+    (repeatedMonths.length?'<div>מספר דוחות משויכים לאותו חודש, ויש לבדוק גרסאות: '+
+      repeatedMonths.map(([mm,n])=>esc(mm)+' ('+n+')').join(', ')+'</div>':'')+
+    (proposedMonths.length?'<div>'+proposedMonths.length+' חודשי דוח הוצעו אוטומטית ועדיין דורשים אישור.</div>':'')+
+    (coverageHelp.length?'<div>'+coverageHelp.map(x=>esc(x)).join('<br>')+'</div>':'')+
+    '<div>לא ניתן להסיק שחסרים דוחות או כספים עד להשלמת הזיהוי. אפשר לבדוק את הרשימה המפורטת ואת אימות החודשים למטה.</div></div>':"";
   const typeSummary=$("typeSummary");
   if(typeSummary)typeSummary.innerHTML='<div class="flag info">זוהו לפי התוכן: '+
     pays.length+' תלושי שכר, '+S.docs.filter(d=>d.kind==="attendance").length+
     ' דוחות נוכחות'+(unresolved.length?' · '+unresolved.length+
     ' מסמכים שלא זוהו':'')+'. חודשי תלוש מזוהים: '+new Set(pays.filter(d=>d.month!=="לא זוהה").map(d=>d.month)).size+
     ' · חודשי נוכחות מזוהים: '+new Set(S.docs.filter(d=>d.kind==="attendance"&&d.month!=="לא זוהה").map(d=>d.month)).size+
-    '. ניתן להעלות גם 12 חודשים. המערכת בודקת גם תלוש מול תלוש ללא דוחות נוכחות; הצלבת שעות: דוח M ← תלוש M+1.</div>'+
+    '. ניתן לצרף מסמכים של שנים רבות במספר פעימות; הצלבת שעות: דוח M ← תלוש M+1.</div>'+
     '<details><summary>כיסוי נתונים: '+coverage.verified+' תלושים עם נוכחות מאומתת מתוך '+coverage.rows.length+' חודשי תלוש מזוהים</summary>'+
     (coverage.notPaired.length?'<div class="flag info">לא שויכו דוחות נוכחות לתלושים: '+coverage.notPaired.map(c=>esc(c.payMonth)+' (נדרש דוח '+esc(c.expectedWorkMonth)+')').join(', ')+'. לא ניתן לקבוע שהדוחות חסרים; ייתכן שלא זוהו או לא הועלו.</div>':'')+
     (coverage.needsVerification.length?'<div class="flag info">קיימים דוחות ששויכו אך טרם אומתו במלואם: '+coverage.needsVerification.map(c=>esc(c.payMonth)).join(', ')+'.</div>':'')+
     (coverage.ambiguous.length?'<div class="flag info">שיוך כפול או לא חד־משמעי בתלושים: '+coverage.ambiguous.map(c=>esc(c.payMonth)).join(', ')+'.</div>':'')+
     (!coverage.notPaired.length&&!coverage.needsVerification.length&&!coverage.ambiguous.length?'<div class="flag ok">כל חודשי התלוש שזוהו משויכים לדוח נוכחות מאומת.</div>':'')+
     '</details>'+
+    coverageAlert+
     '<details><summary>בדוק אילו קבצים וחודשים זוהו</summary>'+
     S.docs.map(d=>{
       const source=d.kind!=="attendance"?"":d.monthSource==="visual+calendar"?
