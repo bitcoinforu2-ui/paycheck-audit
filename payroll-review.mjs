@@ -80,7 +80,7 @@ export function redactedAuditExport({docs=[],findings=[],coverage=null}={}){
     warning:"Contains sensitive wage and work-hour amounts; share only if you choose.",
     docs:docs.map(d=>({
       kind:["payslip","attendance"].includes(d.kind)?d.kind:"unknown",
-      month:/^(0[1-9]|1[0-2])\\/20\\d{2}$/.test(d.month||"")?d.month:null,
+      month:monthOrdinal(d.month)>0?d.month:null,
       monthSource:["visual+calendar","user-confirmed","visual-only","calendar-unique",
         "calendar+unique-payslip","conflicting-evidence"].includes(d.monthSource)?
         d.monthSource:null,
@@ -93,7 +93,7 @@ export function redactedAuditExport({docs=[],findings=[],coverage=null}={}){
       variableComponents:takeVariable(d.variableComponents),
       totals:pickSummary(d.guard?.summary)
     })),
-    findings:findings.filter(f=>f&&/^(0[1-9]|1[0-2])\\/20\\d{2}$/.test(f.month||""))
+    findings:findings.filter(f=>f&&monthOrdinal(f.month)>0)
       .map(f=>({
         month:f.month,
         id:["oncall","premium","mileage","mealShift","mealAllowance"].includes(f.id)?f.id:null,
