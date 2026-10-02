@@ -1402,7 +1402,7 @@ async function restoreArchive(){
  try{
   const entries=await savedDocuments(),byMonth=new Map();
   for(const entry of entries){
-   S.savedIds.add(entry.id);const d=entry.doc;
+   S.savedIds.add(entry.hash||entry.id);const d=entry.doc;
    if(d&&["payslip","attendance"].includes(d.kind)&&d.month!=="לא זוהה")byMonth.set(d.kind+":"+d.month,d);
   }
   S.docs=[...byMonth.values()];S.archiveAvailable=true;
@@ -1489,7 +1489,13 @@ $("historyImport").onchange=async e=>{
     }
     S.docs=[...current.values()];
     if(S.archiveAvailable){
-      try{for(const d of data)await saveDocument("import:"+d.kind+":"+d.month,d)}
+      try{
+        for(const d of data){
+          if(current.get(d.kind+":"+d.month)!==d)continue;
+          const previous=await saveDocument("import:"+d.kind+":"+d.month,d);
+          if(previous)S.savedIds.delete(previous);
+        }
+      }
       catch(error){console.warn("History save failed",error);note.textContent="הייבוא נקלט בזיכרון, אך השמירה המקומית נכשלה.";return}
     }
     note.textContent="נקלטו "+data.filter(d=>d.kind==="payslip").length+
@@ -1570,12 +1576,14 @@ $("analyzeBtn").onclick=async()=>{
         d.rawText=text;
         // A freshly uploaded PDF supersedes a prior local data-pack record
         // for the same document kind and month, without changing other months.
-        if(d.month!=="לא זוהה")S.docs=S.docs.filter(old=>
-          old.kind!==d.kind||old.month!==d.month);
-        S.docs.push(d);
         if(d.kind!=="unknown"&&d.month!=="לא זוהה"&&S.archiveAvailable){
-          await saveDocument(id,d);S.savedIds.add(id);
+          const previous=await saveDocument(id,d);
+          if(previous)S.savedIds.delete(previous);
+          S.savedIds.add(id);
         }
+        if(d.month!=="לא זוהה"&&d.kind!=="unknown")
+          S.docs=S.docs.filter(old=>old.kind!==d.kind||old.month!==d.month);
+        S.docs.push(d);
         archiveCounter("עובדו "+(i+1)+" מתוך "+jobs.length);
       }catch(e){
         console.error("Failed file:",j.file.name,e);
