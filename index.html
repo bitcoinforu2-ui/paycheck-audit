@@ -124,6 +124,20 @@
         <button class="primary compact" id="peerExportBtn" type="button" disabled>ייצוא קובץ השוואה אישי</button>
         <small id="peerExportStatus" role="status">לא נוצר קובץ. תלושים מקוריים, פרטים מזהים ופרטי מס אינם מיוצאים.</small>
       </div>
+      <div class="peer-import" id="researchSharePanel">
+        <h3>שיתוף אוטומטי למחקר — בהסכמה נפרדת</h3>
+        <p class="muted-note">אחרי חיבור מאובטח, אפשר לשתף נתונים נבחרים ומעוגלים לצורך למידת מנוע השכר. אין העברה אוטומטית של תלושים, מסמכי נוכחות, שמות או נתוני מס. הנתונים יישמרו בנפרד במאגר המחקר עד למחיקה באמצעות קוד ביטול. מאחר שמספר המשתתפים קטן, אין הבטחה לאנונימיות.</p>
+        <label class="peer-consent"><input type="checkbox" id="researchConsent"> אני בוחר/ת להשתתף במחקר מרצוני ומסכים/ה להעברה ושמירה של מדדי שכר חודשיים מעוגלים, ותיאור כללי אם התפקיד דומה, לצורך השוואה ושיפור המנוע. אני מבין/ה שאפשר להפסיק ולבקש מחיקה באמצעות קוד הביטול שאקבל, ושהשיתוף אינו תנאי לשימוש באפליקציה.</label>
+        <div id="researchChallenge"></div>
+        <button type="button" id="researchContributeBtn" class="primary compact" disabled>שתף מדדים מעוגלים עם המנוע</button>
+        <p id="researchStatus" role="status" class="muted-note">המאגר המאובטח טרם חובר; לא נשלח מידע.</p>
+        <div class="peer-controls">
+          <label>קוד ביטול השתתפות
+            <input id="researchReceipt" type="text" autocomplete="off" placeholder="קוד המחיקה שקיבלת">
+          </label>
+          <button type="button" id="researchRevokeBtn" class="secondary compact" disabled>מחק את התרומה שלי מהמאגר</button>
+        </div>
+      </div>
       <div class="peer-import">
         <h3>השוואה מקומית של קבצים שהתקבלו בהסכמה</h3>
         <label>בחר קובצי השוואה שהעמיתים יצרו בעצמם
