@@ -12,6 +12,8 @@ on:
       - "tests/dashboard-48-months.e2e.mjs"
       - "tests/dashboard-120-months.e2e.mjs"
       - "tests/payroll-120-raw.e2e.mjs"
+      - "peer-comparison.mjs"
+      - "tests/peer-consent.e2e.mjs"
       - ".github/workflows/payroll-browser.yml"
   workflow_dispatch:
 permissions:
@@ -37,6 +39,7 @@ jobs:
           CHROME_PATH="$CHROME_PATH" node tests/dashboard-48-months.e2e.mjs
           CHROME_PATH="$CHROME_PATH" node tests/dashboard-120-months.e2e.mjs
           CHROME_PATH="$CHROME_PATH" node tests/payroll-120-raw.e2e.mjs
+          CHROME_PATH="$CHROME_PATH" node tests/peer-consent.e2e.mjs
       - name: Upload anonymous UI screenshots for visual QA
         if: always()
         uses: actions/upload-artifact@v4
