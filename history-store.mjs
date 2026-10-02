@@ -37,9 +37,13 @@ export function saveDocument(id,doc){
  // Keep parsed fields only. Raw employee names/PDF text never enter this archive.
  const {rawText, ...safeDoc}=doc;
  return queued(async()=>{
-  const db=await database();
-  try{await transact(db,"readwrite",s=>s.put({id,doc:safeDoc}))}
-  finally{db.close()}
+  const db=await database(),monthlyId=doc.kind+":"+doc.month;
+  try{
+    // One authoritative record per work month and document kind.
+    const previous=await transact(db,"readonly",s=>s.get(monthlyId));
+    await transact(db,"readwrite",s=>s.put({id:monthlyId,hash:id,doc:safeDoc}));
+    return previous?.hash||null;
+  }finally{db.close()}
  });
 }
 export function clearSavedDocuments(){
