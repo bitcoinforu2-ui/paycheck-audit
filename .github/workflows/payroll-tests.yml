@@ -4,6 +4,7 @@ on:
     paths:
       - "app-v7.js"
       - "payroll-trends.mjs"
+      - "payroll-review.mjs"
       - "tests/**"
       - ".github/workflows/payroll-tests.yml"
   workflow_dispatch:
@@ -21,5 +22,7 @@ jobs:
         run: node --check --input-type=module < app-v7.js
       - name: Check trends module syntax
         run: node --check payroll-trends.mjs
+      - name: Check review module syntax
+        run: node --check payroll-review.mjs
       - name: Run multi-month payroll regression tests
         run: node --test tests/*.test.mjs
