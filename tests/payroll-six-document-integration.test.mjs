@@ -9,7 +9,7 @@ import { VARIABLE_PAY_COMPONENTS, detectVariablePayTrends, monthIndex,
 // payslips and three preceding attendance summaries. NO employee data or
 // actual PDF documents are embedded in this repository.
 const source=fs.readFileSync(new URL("../app-v7.js",import.meta.url),"utf8")
-  .replace(/^import .*$/m,"").split("function request(")[0];
+  .replace(/^import .*$/gm,"").split("function request(")[0];
 const elements=new Map();
 const sandbox={
   window:{pdfjsLib:{GlobalWorkerOptions:{}}},
