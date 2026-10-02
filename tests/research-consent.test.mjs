@@ -59,3 +59,21 @@ test("consented contribution is stored without source files and revocable with s
   assert.equal(records.size,0);
  }finally{globalThis.fetch=originalFetch}
 });
+
+test("only operator-authenticated groups with >=10 submissions appear in research summaries",async()=>{
+ const sample=toRoundedSample(peer);
+ const env={ADMIN_API_TOKEN:"long-private-administrator-secret",RESEARCH_DB:{
+  prepare(){return {async all(){return {results:Array.from({length:9},()=>({sample:JSON.stringify(sample)}))}}}}
+ }};
+ const request=()=>new Request("https://api.example.com/v1/summary",{headers:{authorization:"Bearer "+env.ADMIN_API_TOKEN}});
+ const low=await worker.fetch(request(),env);
+ assert.equal(low.status,200);
+ assert.equal((await low.json()).cohorts.length,0);
+ env.RESEARCH_DB.prepare=()=>({async all(){return {results:Array.from({length:10},()=>({sample:JSON.stringify(sample)}))}}});
+ const ok=await worker.fetch(request(),env);
+ const out=await ok.json();assert.equal(out.cohorts.length,1);
+ assert.equal(out.cohorts[0].contributions,10);
+ assert.equal(out.cohorts[0].hourlyBucketMedian,50);
+ const denied=await worker.fetch(new Request("https://api.example.com/v1/summary"),env);
+ assert.equal(denied.status,401);
+});
