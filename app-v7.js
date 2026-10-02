@@ -1,5 +1,6 @@
 const $=id=>document.getElementById(id);
 import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
+import {coverageByPayslip,buildPayrollInquiry} from "./payroll-review.mjs";
 const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false};
 
 const pdfjs=window.pdfjsLib;
@@ -920,9 +921,12 @@ function renderPayrollGuard(pays){
       const source=f.historyMonths.join(" ו־");
       const typical=f.typicalQuantity!=null?
         " (כמות אופיינית ברכיב: "+fmt(f.typicalQuantity)+")":"";
+      const sameMonth=docs.find(d=>d.month===f.month);
+      const separateMeal=sameMonth?.variableComponents?.mealShift?.state==="paid"&&f.id==="mealAllowance"?
+        ' רכיב אחר, „כלכלה משמרת”, כן מופיע בתלוש; אין להסיק שהוא מחליף את דמי הכלכלה, ויש לבדוק את הזכאות לכל קוד בנפרד.':'';
       const msg=f.kind==="missing"?
         f.month+": רכיב „"+f.label+"” הופיע בתלושי "+source+
-          " ואינו מופיע בתלוש הנוכחי"+typical+".":
+          " ואינו מופיע בתלוש הנוכחי"+typical+"."+separateMeal:
         f.month+": רכיב „"+f.label+"” ירד מכמות "+fmt(f.typicalQuantity)+
           " לכמות "+fmt(f.currentQuantity)+" לעומת התלושים הקודמים.";
       const caution=" יש לבדוק זכאות בפועל, חופשה, שינוי שיבוץ ותשלומים מתקנים"+
@@ -1196,6 +1200,7 @@ function render(){
   const undatedAttendance=S.docs.filter(d=>d.kind==="attendance"&&d.month==="לא זוהה");
   if(unresolved.length||undatedAttendance.length)S.insufficient=true;
   const pays=S.docs.filter(d=>d.kind==="payslip");
+  const coverage=coverageByPayslip(pays,S.docs.filter(d=>d.kind==="attendance"));
   const rated=pays.filter(d=>Number.isFinite(d.hourly)).sort((a,b)=>monthKey(b.month)-monthKey(a.month));
   const rateDoc=rated[0]||null,rate=rateDoc?.hourly??null;
   $("autoProfile").innerHTML=[
@@ -1212,6 +1217,12 @@ function render(){
     ' מסמכים שלא זוהו':'')+'. חודשי תלוש מזוהים: '+new Set(pays.filter(d=>d.month!=="לא זוהה").map(d=>d.month)).size+
     ' · חודשי נוכחות מזוהים: '+new Set(S.docs.filter(d=>d.kind==="attendance"&&d.month!=="לא זוהה").map(d=>d.month)).size+
     '. ניתן להעלות גם 12 חודשים. המערכת בודקת גם תלוש מול תלוש ללא דוחות נוכחות; הצלבת שעות: דוח M ← תלוש M+1.</div>'+
+    '<details><summary>כיסוי נתונים: '+coverage.verified+' תלושים עם נוכחות מאומתת מתוך '+coverage.rows.length+' חודשי תלוש מזוהים</summary>'+
+    (coverage.notPaired.length?'<div class="flag info">לא שויכו דוחות נוכחות לתלושים: '+coverage.notPaired.map(c=>esc(c.payMonth)+' (נדרש דוח '+esc(c.expectedWorkMonth)+')').join(', ')+'. לא ניתן לקבוע שהדוחות חסרים; ייתכן שלא זוהו או לא הועלו.</div>':'')+
+    (coverage.needsVerification.length?'<div class="flag info">קיימים דוחות ששויכו אך טרם אומתו במלואם: '+coverage.needsVerification.map(c=>esc(c.payMonth)).join(', ')+'.</div>':'')+
+    (coverage.ambiguous.length?'<div class="flag info">שיוך כפול או לא חד־משמעי בתלושים: '+coverage.ambiguous.map(c=>esc(c.payMonth)).join(', ')+'.</div>':'')+
+    (!coverage.notPaired.length&&!coverage.needsVerification.length&&!coverage.ambiguous.length?'<div class="flag ok">כל חודשי התלוש שזוהו משויכים לדוח נוכחות מאומת.</div>':'')+
+    '</details>'+
     '<details><summary>בדוק אילו קבצים וחודשים זוהו</summary>'+
     S.docs.map(d=>{
       const source=d.kind!=="attendance"?"":d.monthSource==="visual+calendar"?
@@ -1364,14 +1375,7 @@ function render(){
   }}));
 }
 function request(){
-  if(!S.issues.length&&S.questions.length){
-    return "שלום,\n\nעלו הבדלים בכמויות שעות בין הדוח לתלוש, ללא מסקנה על חוסר בתשלום:\n\n"+
-      S.questions.map((x,i)=>(i+1)+". חודש עבודה "+x.month+" / תלוש "+x.pay+": "+x.text).join("\n")+
-      "\n\nאבקש את פירוט השעות ותיקוני השכר לפי חודש העבודה וקוד השכר.\n\nתודה.";
-  }
-  if(!S.issues.length&&S.insufficient)return "שלום,\n\nניסיתי לבצע השוואה בין תלוש השכר לדוח הנוכחות, אך חלק מרכיבי השעות במסמכים לא נקראו בצורה שמאפשרת השוואה אמינה. אבקש בדיקה ידנית של הנתונים המצורפים.\n\nתודה.";
-  if(!S.issues.length)return "שלום,\n\nביצעתי בדיקה של תלוש השכר מול דוח הנוכחות ולא נמצא כרגע פער ברור שניתן לנסח כפנייה. אבקש בדיקה כללית של הנתונים המצורפים.\n\nתודה.";
-  return "שלום,\n\nבבדיקה בין דוח הנוכחות לתלוש השכר עלו הנקודות הבאות לבדיקה:\n\n"+S.issues.map((x,i)=>(i+1)+". חודש "+x.month+": "+x.text).join("\n")+"\n\nאבקש לבדוק מול מערכת הנוכחות ורכיבי השכר ולתקן במידת הצורך.\n\nתודה.";
+  return buildPayrollInquiry(S.issues,S.questions,S.insufficient);
 }
 
 function fileKey(f){return [f.name,f.size,f.lastModified].join("::")}
