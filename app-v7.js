@@ -1,7 +1,8 @@
 const $=id=>document.getElementById(id);
 import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
 import {coverageByPayslip,buildPayrollInquiry} from "./payroll-review.mjs";
-const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false};
+import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments} from "./history-store.mjs";
+const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false,savedIds:new Set(),archiveAvailable:false};
 
 const pdfjs=window.pdfjsLib;
 if(!pdfjs)throw new Error("PDFJS_NOT_LOADED");
@@ -1391,6 +1392,24 @@ function resetVisibleResults(){
   ["autoProfileSection","resultsSection","requestSection","reviewSection"].forEach(id=>$(id)?.classList.add("hidden"));
   $("progressWrap")?.classList.add("hidden");
 }
+function archiveCounter(message=""){
+ const node=$("archiveStatus");if(!node)return;
+ const slips=S.docs.filter(d=>d.kind==="payslip").length;
+ const reports=S.docs.filter(d=>d.kind==="attendance").length;
+ node.textContent=(message?message+" · ":"")+"בארכיון "+slips+" תלושים, "+reports+" דוחות · "+(S.pay.length+S.att.length)+" ממתינים";
+}
+async function restoreArchive(){
+ try{
+  const entries=await savedDocuments(),byMonth=new Map();
+  for(const entry of entries){
+   S.savedIds.add(entry.hash||entry.id);const d=entry.doc;
+   if(d&&["payslip","attendance"].includes(d.kind)&&d.month!=="לא זוהה")byMonth.set(d.kind+":"+d.month,d);
+  }
+  S.docs=[...byMonth.values()];S.archiveAvailable=true;
+  if(S.docs.length)render();archiveCounter("ארכיון מקומי נטען");
+ }catch(error){console.warn("Archive unavailable",error);archiveCounter("שמירה מקומית אינה זמינה")}
+ finally{$("analyzeBtn").disabled=false}
+}
 function renderSelectedFiles(){
   const chips=(files,kind)=>files.map((f,i)=>
     '<span class="file-chip file-chip-removable"><span class="file-name">'+esc(f.name)+'</span>'+
@@ -1399,6 +1418,7 @@ function renderSelectedFiles(){
 
   $("payList").innerHTML=chips(S.pay,"pay");
   $("attList").innerHTML=chips(S.att,"att");
+  archiveCounter();
 
   document.querySelectorAll(".file-remove").forEach(btn=>btn.onclick=()=>{
     const key=btn.dataset.kind==="pay"?"pay":"att",idx=Number(btn.dataset.index);
@@ -1468,6 +1488,16 @@ $("historyImport").onchange=async e=>{
         current.set(key,d);
     }
     S.docs=[...current.values()];
+    if(S.archiveAvailable){
+      try{
+        for(const d of data){
+          if(current.get(d.kind+":"+d.month)!==d)continue;
+          const previous=await saveDocument("import:"+d.kind+":"+d.month,d);
+          if(previous)S.savedIds.delete(previous);
+        }
+      }
+      catch(error){console.warn("History save failed",error);note.textContent="הייבוא נקלט בזיכרון, אך השמירה המקומית נכשלה.";return}
+    }
     note.textContent="נקלטו "+data.filter(d=>d.kind==="payslip").length+
       " תלושים ו־"+data.filter(d=>d.kind==="attendance").length+" דוחות. ייבוא מקומי בלבד.";
     note.style.color="#77e7c9";
@@ -1522,7 +1552,9 @@ $("recalcBtn").onclick=()=>{
 
 $("analyzeBtn").onclick=async()=>{
   if(S.pay.length+S.att.length<2){alert("נא להעלות לפחות שני מסמכים. אפשר לבחור את כל הקבצים באותו מקום וללא סדר מסוים.");return}
-  $("analyzeBtn").disabled=true;S.docs=[...S.imported];$("requestSection").classList.add("hidden");
+  $("analyzeBtn").disabled=true;
+  if(!S.docs.length)S.docs=[...S.imported];
+  $("requestSection").classList.add("hidden");
   const seen=new Set();
   const jobs=[...S.pay,...S.att].filter(file=>{
     const key=fileKey(file);if(seen.has(key))return false;seen.add(key);return true;
@@ -1532,6 +1564,8 @@ $("analyzeBtn").onclick=async()=>{
     for(let i=0;i<jobs.length;i++){
       const j=jobs[i],base=i/jobs.length,span=.94/jobs.length,isPdf=j.file.type==="application/pdf"||j.file.name.toLowerCase().endsWith(".pdf");
       try{
+        const id=await fingerprint(j.file);
+        if(S.savedIds.has(id)){prog("כפילות: "+j.file.name,base+span);continue}
         const text=isPdf?await pdfText(j.file,base,span,"auto"):await imageText(j.file,base,span);
         if(!String(text||"").trim())throw new Error("EMPTY_TEXT");
         const detected=detectDocumentKind(text);
@@ -1542,15 +1576,29 @@ $("analyzeBtn").onclick=async()=>{
         d.rawText=text;
         // A freshly uploaded PDF supersedes a prior local data-pack record
         // for the same document kind and month, without changing other months.
-        if(d.month!=="לא זוהה")S.docs=S.docs.filter(old=>
-          old.kind!==d.kind||old.month!==d.month);
+        if(d.kind!=="unknown"&&d.month!=="לא זוהה"&&S.archiveAvailable){
+          const previous=await saveDocument(id,d);
+          if(previous)S.savedIds.delete(previous);
+          S.savedIds.add(id);
+        }
+        if(d.month!=="לא זוהה"&&d.kind!=="unknown")
+          S.docs=S.docs.filter(old=>old.kind!==d.kind||old.month!==d.month);
         S.docs.push(d);
+        archiveCounter("עובדו "+(i+1)+" מתוך "+jobs.length);
       }catch(e){
         console.error("Failed file:",j.file.name,e);
         failed.push({name:j.file.name,reason:e?.message||"read-failed"});
         // Continue with the rest of the batch instead of aborting everything.
       }
     }
+    const failedNames=new Set(failed.map(f=>f.name));
+    const checks=await Promise.all(jobs.map(async j=>{
+      try{return {file:j.file,id:await fingerprint(j.file)}}catch{return {file:j.file,id:null}}
+    }));
+    const keep=new Set(checks.filter(x=>failedNames.has(x.file.name)||!x.id||!S.savedIds.has(x.id)).map(x=>fileKey(x.file)));
+    S.pay=S.pay.filter(f=>keep.has(fileKey(f)));
+    S.att=S.att.filter(f=>keep.has(fileKey(f)));
+    renderSelectedFiles();
     if(S.docs.length){
       prog("הניתוח הסתיים",1);
       render();
@@ -1564,3 +1612,14 @@ $("analyzeBtn").onclick=async()=>{
     }
   }finally{$("analyzeBtn").disabled=false}
 };
+const archiveNode=document.createElement("div");
+archiveNode.style.cssText="margin:12px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+archiveNode.innerHTML='<span id="archiveStatus" role="status">טוען ארכיון...</span> <button type="button" id="clearArchive" class="secondary compact">מחק היסטוריה שמורה במכשיר</button>';
+$("analyzeBtn").insertAdjacentElement("afterend",archiveNode);
+$("analyzeBtn").disabled=true;
+$("clearArchive").onclick=async()=>{
+ if(!confirm("למחוק את הנתונים המעובדים השמורים בדפדפן זה?"))return;
+ try{await clearSavedDocuments();S.savedIds.clear();S.docs=[];S.imported=[];resetVisibleResults();archiveCounter("הארכיון נמחק")}
+ catch(err){alert("מחיקת הארכיון נכשלה: "+String(err.message||err))}
+};
+restoreArchive();
