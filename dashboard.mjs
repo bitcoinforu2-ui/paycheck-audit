@@ -9,7 +9,7 @@ const asIndex=m=>{const q=/^(0[1-9]|1[0-2])\/(20\d{2})$/.exec(m||"");return q?+q
 const esc=x=>String(x??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const idText=m=>/^(0[1-9]|1[0-2])\/20\d{2}$/.test(m||"")?m:"לא ידוע";
 const legendColor={gross:"#9a4ffe",net:"#2dbeff",hourly:"#985dfd",oncall:"#36e0ba"};
-let state={docs:[],findings:[],issues:[],pairs:[]};
+let state={docs:[],findings:[],issues:[],pairs:[],coverage:null};
 let historySeries="hourly";
 const getDocs=()=>[...new Map(state.docs.filter(d=>d.kind==="payslip"&&asIndex(d.month)!==null)
   .map(d=>[d.month,d])).values()].sort((a,b)=>asIndex(a.month)-asIndex(b.month));
@@ -34,15 +34,21 @@ function renderKpis(){
   const all=state.docs.filter(d=>d.kind!=="unknown");
   const confirmed=all.filter(d=>d.kind==="payslip"?Boolean(d.guard?.summary):Boolean(d.verifiedAttendanceSummary));
   $("kpiQuality").textContent=all.length?confirmed.length+"/"+all.length:"—";
-  $("kpiQualityNote").textContent=all.length?"מסמכים שסיכומם נקרא ואומת":"ממתין להעלאת קבצים";
+  $("kpiQualityNote").textContent=all.length?"סיכומים שנקראו; אימות שיוך חודשי מוצג בנפרד":"ממתין להעלאת קבצים";
   const has=state.docs.length>0;
   $("resultsPlaceholder").classList.toggle("hidden",has);
   $("letterShortcut").disabled=!has;
   const readyPay=pay.length,readyAtt=att.filter(x=>x.verifiedAttendanceSummary).length;
+  const coverage=state.coverage;
+  const rows=Array.isArray(coverage?.rows)?coverage.rows:[];
+  const fullyMatched=Number.isFinite(coverage?.verified)?coverage.verified:0;
+  const pending=rows.length-fullyMatched;
   $("integrityList").innerHTML=
     '<p class="'+(readyPay?"good":"")+'">'+(readyPay?"✓":"◯")+' נקראו '+readyPay+' תלושי שכר</p>'+
     '<p class="'+(readyAtt?"good":"")+'">'+(readyAtt?"✓":"◯")+' זוהו '+readyAtt+' דוחות נוכחות עם סיכומים</p>'+
-    '<p class="'+(state.findings.length?"good":"")+'">'+(pay.length>=3?"✓ בוצעה השוואה רב־חודשית":"◯ נדרשים 3 תלושים לבדיקת רכיבים חוזרים")+'</p>';
+    '<p class="'+(pay.length>=3?"good":"")+'">'+(pay.length>=3?"✓ בוצעה השוואה רב־חודשית":"◯ נדרשים 3 תלושים לבדיקת רכיבים חוזרים")+'</p>'+
+    (rows.length?'<p class="'+(pending===0?"good":"")+'">'+(pending===0?"✓":"◯")+' '+fullyMatched+' מתוך '+rows.length+' חודשי תלוש שויכו לדוחות נוכחות מאומתים'+
+      (pending>0?' · '+pending+' חודשי תלוש דורשים השלמה או אימות':'')+'</p>':'');
 }
 function plotBars(){
  const pay=getDocs().filter(p=>goodNum(metricDoc(p,"gross"))&&goodNum(metricDoc(p,"net"))).slice(-12);
@@ -115,7 +121,8 @@ window.addEventListener("paycheck:dashboard-data",event=>{
  const d=event.detail||{};state={docs:Array.isArray(d.docs)?d.docs:[],
   findings:Array.isArray(d.findings)?d.findings:[],
   issues:Array.isArray(d.issues)?d.issues:[],
-  pairs:Array.isArray(d.pairs)?d.pairs:[]};
+  pairs:Array.isArray(d.pairs)?d.pairs:[],
+  coverage:d.coverage&&typeof d.coverage==="object"?d.coverage:null};
  draw();
 });
 for(const item of document.querySelectorAll("[data-nav]")){
