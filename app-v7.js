@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
 import {coverageByPayslip,buildPayrollInquiry} from "./payroll-review.mjs";
-import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments} from "./history-store.mjs";
+import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments,archivedDocument,saveReviewedDocuments} from "./history-store.mjs";
 const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false,savedIds:new Set(),archiveAvailable:false};
 
 const pdfjs=window.pdfjsLib;
@@ -16,29 +16,38 @@ const OT=[
 ];
 
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
-const num=s=>{const v=Number(String(s??"").replace(/,/g,"").replace(/[^0-9.\-]/g,""));return Number.isFinite(v)?v:null};
+const num=s=>{const text=String(s??"").trim().replace(/,/g,"");if(!/^-?\d+(?:\.\d+)?$/.test(text))return null;const v=Number(text);return Number.isFinite(v)?v:null};
 const fmt=v=>v==null?"—":Number(v).toLocaleString("he-IL",{maximumFractionDigits:2});
 const hh=v=>{if(v==null)return"—";const sign=v<0?"-":"";const m=Math.round(Math.abs(v)*60);return sign+Math.floor(m/60)+":"+String(m%60).padStart(2,"0")};
 const median=a=>{a=a.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const i=Math.floor(a.length/2);return a.length%2?a[i]:(a[i-1]+a[i])/2};
 
 function month(text){
-  const t=String(text||"");
+  const lines=String(text||"").split(/\n+/);
+  const explicit=lines.filter(l=>/(?:חודש\s*(?:השכר|שכר)|(?:תלוש|שכר).*?לחודש|תלוש\s*שכר\s*[:\-]?\s*\d)/.test(l));
+  // Pay-item work periods and document print dates are not the slip month.
+  const summary=lines.findIndex(l=>/שכר\s*בסיס|סיסב\s*רכש/.test(l));
+  const heading=explicit.length?explicit:lines.slice(0,summary>=0?summary:12);
+  const t=heading.join("\n").replace(/\b\d{1,2}[/.-]\d{1,2}[/.-](?:20\d{2}|\d{2})\b/g,"");
+  const found=new Set();
   const names={ינואר:1,פברואר:2,מרץ:3,אפריל:4,מאי:5,יוני:6,יולי:7,אוגוסט:8,ספטמבר:9,אוקטובר:10,נובמבר:11,דצמבר:12};
   for(const [n,m] of Object.entries(names)){
-    const x=t.match(new RegExp(n+"\\s*(20\\d{2})"))||t.match(new RegExp("(20\\d{2})\\s*"+n));
-    if(x){const y=x[1];return String(m).padStart(2,"0")+"/"+y}
+    for(const re of [new RegExp(n+"\\s*(20\\d{2})","g"),new RegExp("(20\\d{2})\\s*"+n,"g")])
+      for(const x of t.matchAll(re))found.add(String(m).padStart(2,"0")+"/"+x[1]);
   }
-  let x=t.match(/\b(0?[1-9]|1[0-2])[/.-](20\d{2})\b/);
-  if(x)return String(+x[1]).padStart(2,"0")+"/"+x[2];
-  x=t.match(/\b(0?[1-9]|1[0-2])[/.-](2\d)\b/);
-  return x?String(+x[1]).padStart(2,"0")+"/20"+x[2]:"לא זוהה";
+  for(const x of t.matchAll(/\b(0?[1-9]|1[0-2])[/.-](20\d{2}|2\d)\b/g))
+    found.add(String(+x[1]).padStart(2,"0")+"/"+(x[2].length===2?"20":"")+x[2]);
+  return found.size===1?[...found][0]:"לא זוהה";
 }
 function shift(mm,d){
   if(!mm||mm==="לא זוהה")return null;
   const [m,y]=mm.split("/").map(Number),dt=new Date(y,m-1+d,1);
   return String(dt.getMonth()+1).padStart(2,"0")+"/"+dt.getFullYear();
 }
-function lineNums(line){return (String(line).match(/-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?/g)||[]).map(num).filter(Number.isFinite)}
+function lineNums(line){
+  const text=String(line).replace(/\b\d{1,2}[/.-]\d{1,2}[/.-](?:20\d{2}|\d{2})\b/g," ")
+    .replace(/\b\d{1,2}\/(?:20\d{2}|\d{2})\b/g," ");
+  return (text.match(/-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/g)||[]).map(num).filter(Number.isFinite);
+}
 
 
 // Identify documents by multiple content signatures, never by upload bucket.
@@ -241,6 +250,7 @@ async function pdfText(file,base,span,kind){
   let p;try{p=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise}
   catch(err){throw new Error("PDF_OPEN_FAILED",{cause:err})}
   const out=[],sums=[],months=[],calendars=[];
+  try{
   for(let i=1;i<=p.numPages;i++){
     const pb=base+span*((i-1)/p.numPages),ps=span/p.numPages;
     prog("קורא PDF: "+file.name+" — "+i+"/"+p.numPages,pb);
@@ -276,16 +286,17 @@ async function pdfText(file,base,span,kind){
     const visualMonth=uniqueMonths.length===1?uniqueMonths[0]:null;
     // The calendar can disambiguate outlined text. If visual OCR and
     // calendar evidence conflict, do not claim a month.
-    const conflict=Boolean(visualMonth&&cal&&cal.candidates.length&&!cal.candidates.includes(visualMonth));
+    const conflict=uniqueMonths.length>1||Boolean(visualMonth&&cal&&cal.candidates.length&&!cal.candidates.includes(visualMonth));
     const month=conflict?null:(visualMonth||(cal?.candidates.length===1?cal.candidates[0]:null));
     const source=conflict?"conflicting-evidence":
       (visualMonth&&cal?.candidates.includes(visualMonth)?"visual+calendar":
       visualMonth?"visual-only":cal?.candidates.length===1?"calendar-unique":"unverified");
     out.unshift("@@ATT_PDF_META "+JSON.stringify({
       month,monthSource:source,monthCandidates:cal?.candidates||[],
-      summary:distinct.length===1?sums[0]:null})+" @@");
+      summary:!conflict&&distinct.length===1?sums[0]:null})+" @@");
   }
   return out.join("\n");
+  }finally{await p.destroy?.()}
 }
 function canvasBlob(canvas,type="image/jpeg",quality=.95){
   return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("CANVAS_BLOB_FAILED")),type,quality));
@@ -312,11 +323,13 @@ function cropCanvas(source,y0,y1){
   return canvas;
 }
 async function imageText(file,base,span){
+  let source;
   try{
     const bmp=await createImageBitmap(file);
     const longSide=Math.max(bmp.width,bmp.height);
     const scale=Math.max(1,Math.min(3.2,4600/longSide));
-    const source=preparedCanvas(bmp,scale);
+    source=preparedCanvas(bmp,scale);
+    bmp.close?.();
     const texts=[];
 
     // First pass: full page. Good for month/header and document classification.
@@ -333,6 +346,7 @@ async function imageText(file,base,span){
     }
     prog("OCR כללי: "+file.name,base);
     texts.push(await ocrBlob(await canvasBlob(fullCanvas),file.name+" — עמוד מלא",base,span*.24));
+    if(fullCanvas!==source){fullCanvas.width=0;fullCanvas.height=0}
 
     // Second pass: overlapping horizontal tiles. This is the key path for screenshots:
     // small payroll/attendance tables become large enough for OCR to read numbers reliably.
@@ -347,14 +361,15 @@ async function imageText(file,base,span){
       const pBase=base+span*(.24+.76*(i/tiles));
       const pSpan=span*(.76/tiles);
       prog("OCR אזור "+(i+1)+"/"+tiles+": "+file.name,pBase);
-      texts.push(await ocrBlob(await canvasBlob(tile),file.name+" — אזור "+(i+1),pBase,pSpan));
+      try{texts.push(await ocrBlob(await canvasBlob(tile),file.name+" — אזור "+(i+1),pBase,pSpan))}
+      finally{tile.width=0;tile.height=0}
     }
 
     return texts.filter(Boolean).join("\n--- OCR REGION ---\n");
   }catch(e){
     console.warn("screenshot OCR fallback",e);
     return ocrBlob(file,file.name,base,span);
-  }
+  }finally{if(source){source.width=0;source.height=0}}
 }
 function prog(t,p){
   $("progressWrap").classList.remove("hidden");$("progressText").textContent=t;
@@ -411,11 +426,16 @@ function metricFromNums(values,rate,factor,exclude=[]){
   return null;
 }
 function metricFromRow(lines,code,rate,factor,labelNumber=null){
-  const idx=lines.findIndex(l=>new RegExp("\\b"+code+"\\b").test(l));
-  if(idx>=0){
-    const values=lineNums(lines[idx]);
+  const codeRe=new RegExp("\\b"+code+"\\b");
+  const exact=[...new Set(lines.filter(l=>codeRe.test(l)).map(l=>l.split(" || ")[0].trim()))];
+  // Two pay rows can belong to different retroactive work periods. Do not
+  // silently take the first one or infer across neighboring categories.
+  if(exact.length>1)return null;
+  if(exact.length===1){
+    const values=lineNums(exact[0]);
     const hit=metricFromNums(values,rate,factor,[Number(code),labelNumber]);
     if(hit)return {...hit,source:'exact-code-row'};
+    return null;
   }
 
   // Screenshot/OCR fallback: codes are often missed while "125 / 150 / 175 / 200"
@@ -502,6 +522,10 @@ function incomeTaxFromSlip(lines,guard,month){
   // The municipal sample contains these three mandatory deductions. If another
   // deduction is present, do not assert this residual equals income tax.
   const tax=Math.round((s.mandatoryDeductions-ni-health)*100)/100;
+  const printedTax=codeTotal(lines,91003,{min:0,max:50000});
+  if(!Number.isFinite(printedTax)||Math.abs(printedTax-tax)>1){
+    return {amount:printedTax,verified:false,reason:"שורת מס ההכנסה אינה תואמת להפרש ניכויי החובה; ייתכן רכיב נוסף או קריאה חלקית"};
+  }
   if(tax<0||tax>s.mandatoryDeductions||tax>Math.max(10000,(guard.grossBL||0)*.5)){
     return {amount:null,verified:false,reason:"סכומי ניכויי החובה אינם ניתנים לפירוק אמין"};
   }
@@ -515,7 +539,7 @@ function incomeTaxFromSlip(lines,guard,month){
   if(Math.abs(ni-expected.ni)>1||Math.abs(health-expected.health)>1){
     return {amount:tax,verified:false,reason:"ביטוח לאומי או בריאות לא אומתו מול בסיס החיוב"};
   }
-  return {amount:tax,verified:true,reason:null};
+  return {amount:printedTax,verified:true,reason:null};
 }
 function taxMonthSeries(pays){
   const known=pays.filter(d=>d.month!=="לא זוהה").sort((a,b)=>monthKey(a.month)-monthKey(b.month));
@@ -741,13 +765,14 @@ function renderPayrollGuard(pays){
 
   // 1. Recurring pay components.
   {
+    const reliable=docs.filter(d=>d.guard.summary&&d.guard.componentsVerified);
     const names=new Set();
-    docs.forEach(d=>Object.keys(d.guard.components||{}).forEach(k=>names.add(k)));
+    reliable.forEach(d=>Object.keys(d.guard.components||{}).forEach(k=>names.add(k)));
     const issues=[];
     for(const name of names){
-      const present=docs.filter(d=>d.guard.components?.[name]).length;
-      if(docs.length>=4&&present>=Math.max(3,Math.ceil(docs.length*.7))){
-        for(const d of docs){
+      const present=reliable.filter(d=>d.guard.components?.[name]).length;
+      if(reliable.length>=4&&present>=Math.max(3,Math.ceil(reliable.length*.7))){
+        for(const d of reliable){
           if(!d.guard.components?.[name]){
             issues.push(d.month+": הרכיב הקבוע „"+name+"” לא זוהה, למרות שהוא מופיע ברוב החודשים.");
             addGuardIssue(d.month,"הרכיב הקבוע "+name+" לא זוהה בתלוש, למרות שהוא מופיע ברוב החודשים.");
@@ -757,7 +782,7 @@ function renderPayrollGuard(pays){
       }
     }
     push("1. רציפות רכיבי שכר",issues,"מחפש רכיב שמופיע בקביעות ואז נעלם.",
-      docs.length<4?"דרושים ארבעה תלושים מזוהים לפחות לבדיקת רציפות רכיבי שכר קבועים; שלושה חודשים אינם מספיקים כדי לאשר שאין חריגה.":"");
+      reliable.length<4?"דרושים ארבעה תלושים עם סיכום וטקסט PDF מאומתים לבדיקת רציפות; קריאה חלקית אינה מוכיחה שרכיב נעלם.":"");
   }
 
   // 2. Vacation / sickness arithmetic and continuity.
@@ -785,7 +810,8 @@ function renderPayrollGuard(pays){
         }
       }
     }
-    push("2. חופשה ומחלה",issues,"בודק גם את החשבון בתוך התלוש וגם רצף יתרות מחודש לחודש.");
+    push("2. חופשה ומחלה",issues,"בודק גם את החשבון בתוך התלוש וגם רצף יתרות מחודש לחודש.",
+      docs.some(d=>!d.guard.leave?.vacation||!d.guard.leave?.sick)?"חלק מיתרות החופשה או המחלה לא נקראו; הבדיקה חלקית.":"");
   }
 
   // 3. National insurance & health: never compare a raw OCR-based
@@ -848,7 +874,8 @@ function renderPayrollGuard(pays){
         }
       }
     }
-    push("5. נקודות זיכוי במס",issues,"שינוי בנקודות זיכוי מסומן לבדיקה ואינו מוגדר אוטומטית כטעות.");
+    push("5. נקודות זיכוי במס",issues,"שינוי בנקודות זיכוי מסומן לבדיקה ואינו מוגדר אוטומטית כטעות.",
+      vals.length<3?"אין שלושה חודשים עם נקודות זיכוי שנקראו; לא ניתן להשלים את בדיקת הרציפות.":"");
   }
 
   // 6. Gross -> net -> bank arithmetic.
@@ -864,7 +891,8 @@ function renderPayrollGuard(pays){
         alerts++;
       }
     }
-    push("6. ברוטו → נטו → בנק",issues,"בודק שסך התשלומים פחות ניכויי חובה שווה לנטו, ושהנטו פחות יתר הניכויים שווה לסכום בבנק.");
+    push("6. ברוטו → נטו → בנק",issues,"בודק שסך התשלומים פחות ניכויי חובה שווה לנטו, ושהנטו פחות יתר הניכויים שווה לסכום בבנק.",
+      docs.some(d=>!d.guard.summary)?"חלק מסיכומי השכר לא נקראו או לא נסגרו אריתמטית; לא ניתן לאשר התאמה בכל החודשים.":"");
   }
 
   // 7. Empty "retro differences" headings exist on every payslip.
@@ -954,7 +982,7 @@ function renderPayrollGuard(pays){
 function variablePayEvidence(lines,parsedPayslip){
   const fullPdfRows=lines.some(l=>l.includes(" || "));
   const independentCodes=OT.filter(o=>parsedPayslip.payEvidence?.[o.k]==="exact-code-row").length;
-  const sufficientlyRead=fullPdfRows&&(Boolean(parsedPayslip.guard?.summary)||independentCodes>=2);
+  const sufficientlyRead=fullPdfRows&&Boolean(parsedPayslip.guard?.summary)&&independentCodes>=2;
   const matchLabels={
     oncall:/כוננ/,premium:/פרמיה/,mileage:/ק.{0,3}מ.{0,5}משתנ/,
     mealShift:/כלכלה.{0,5}מש/,mealAllowance:/דמי.{0,5}כלכלה/
@@ -980,7 +1008,7 @@ function variablePayEvidence(lines,parsedPayslip){
 function parse(kind,text,file){
   const clean=String(text||"").replace(/[\u200e\u200f]/g," ");
   const lines=clean.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
-  const d={kind,fileName:file.name,month:kind==="payslip"?month(clean):"לא זוהה",hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null,guard:null};
+  const d={parserVersion:2,kind,fileName:file.name,month:kind==="payslip"?month(clean):"לא זוהה",hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null,guard:null};
   if(kind==="payslip"){
     const explicitRate=hourly(lines);
     const inferredRates=[];
@@ -1000,7 +1028,7 @@ function parse(kind,text,file){
     // when the separate hourly label is not present on the same PDF row.
     const oncallRate=Number.isFinite(explicitRate)?explicitRate:median(inferredRates);
     let on=metricFromRow(lines,"4392",oncallRate,1,null);
-    if(!on){
+    if(!on&&!findCodeRow(lines,"4392")){
       const oi=lines.findIndex(l=>/כוננ/.test(l));
       if(oi>=0)on=metricFromNums(lineNums(lines.slice(Math.max(0,oi-2),Math.min(lines.length,oi+3)).join(" ")),oncallRate,1,[4392]);
     }
@@ -1016,6 +1044,7 @@ function parse(kind,text,file){
     d.marginalTax=taxMarginalRate(lines);
     d.taxGrossYtd=taxLabeledAmount(lines,/ברוטו\s*למס\s*הכנסה/,{min:100,max:5000000,pick:"max"});
     d.guard=extractPayrollGuard(clean,lines);
+    d.guard.componentsVerified=lines.some(l=>l.includes(" || "))&&Boolean(d.guard.summary);
     d.incomeTaxPeriod=incomeTaxFromSlip(lines,d.guard,d.month);
     // A missing row can mean a printed zero, but only for a complete PDF
     // with all three OTHER overtime rates independently code-verified and
@@ -1160,7 +1189,7 @@ function estimate(a,p){
 function assessHourDifferences(a,p){
   const diffs=OT.map(o=>({k:o.k,label:o.label,minutes:
     Number.isFinite(a?.[o.k])&&Number.isFinite(p?.[o.k])?
-    Math.round((a[o.k]-p[o.k])*60):null}));
+    Math.round(a[o.k]*60)-Math.round(p[o.k]*60):null}));
   if(diffs.some(d=>d.minutes===null))return {status:"incomplete",minutes:null,diffs};
   const minutes=diffs.reduce((v,d)=>v+d.minutes,0);
   const pos=diffs.some(d=>d.minutes>15),neg=diffs.some(d=>d.minutes< -15);
@@ -1198,8 +1227,9 @@ function monthKey(mm){
 function render(){
   S.issues=[];S.questions=[];S.variableFindings=[];S.insufficient=false;const ps=pairs();let bad=0,warn=0,good=0;
   const unresolved=S.docs.filter(d=>d.kind==="unknown");
+  const legacy=S.docs.filter(d=>d.needsReparse);
   const undatedAttendance=S.docs.filter(d=>d.kind==="attendance"&&d.month==="לא זוהה");
-  if(unresolved.length||undatedAttendance.length)S.insufficient=true;
+  if(unresolved.length||undatedAttendance.length||legacy.length)S.insufficient=true;
   const pays=S.docs.filter(d=>d.kind==="payslip");
   const coverage=coverageByPayslip(pays,S.docs.filter(d=>d.kind==="attendance"));
   const rated=pays.filter(d=>Number.isFinite(d.hourly)).sort((a,b)=>monthKey(b.month)-monthKey(a.month));
@@ -1236,7 +1266,7 @@ function render(){
     (coverageHelp.length?'<div>'+coverageHelp.map(x=>esc(x)).join('<br>')+'</div>':'')+
     '<div>לא ניתן להסיק שחסרים דוחות או כספים עד להשלמת הזיהוי. אפשר לבדוק את הרשימה המפורטת ואת אימות החודשים למטה.</div></div>':"";
   const typeSummary=$("typeSummary");
-  if(typeSummary)typeSummary.innerHTML='<div class="flag info">זוהו לפי התוכן: '+
+  if(typeSummary)typeSummary.innerHTML=(legacy.length?'<div class="flag warn">'+legacy.length+' תלושים נשמרו בגרסת קריאה קודמת. יש להעלות אותם שוב כדי לאמת קודי שכר וסכומים; לא הופקו מהם מסקנות חדשות.</div>':'')+'<div class="flag info">זוהו לפי התוכן: '+
     pays.length+' תלושי שכר, '+S.docs.filter(d=>d.kind==="attendance").length+
     ' דוחות נוכחות'+(unresolved.length?' · '+unresolved.length+
     ' מסמכים שלא זוהו':'')+'. חודשי תלוש מזוהים: '+new Set(pays.filter(d=>d.month!=="לא זוהה").map(d=>d.month)).size+
@@ -1372,6 +1402,8 @@ function render(){
       '<option value="attendance"'+(d.kind==="attendance"?' selected':'')+'>דוח נוכחות</option></select></label>';
     if(d.kind!=="attendance")return '<div class="review-doc"><b>'+esc(d.kind==="payslip"?"📄 תלוש שכר":"מסמך לא מזוהה")+
       ' · '+esc(d.month)+' · '+esc(d.fileName)+'</b>'+select+
+      (d.kind==="payslip"?'<label>חודש התלוש <input type="month" data-payslip-month="'+i+'" value="'+
+        (monthIndex(d.month)>0?d.month.slice(3)+'-'+d.month.slice(0,2):'')+'"></label>':'')+
       (d.kind==="unknown"?'<div class="small">הזיהוי אינו ודאי. יש לבחור סוג מסמך ולחשב מחדש.</div>':'')+'</div>';
     const options=[...new Set([
       d.month,...(d.monthCandidates||[]),
@@ -1427,8 +1459,8 @@ async function restoreArchive(){
  try{
   const entries=await savedDocuments(),byMonth=new Map();
   for(const entry of entries){
-   S.savedIds.add(entry.hash||entry.id);const d=entry.doc;
-   if(d&&["payslip","attendance"].includes(d.kind)&&d.month!=="לא זוהה")byMonth.set(d.kind+":"+d.month,d);
+   const d=archivedDocument(entry);
+   if(d){if(!d.needsReparse)S.savedIds.add(entry.hash||entry.id);byMonth.set(d.kind+":"+d.month,d)}
   }
   S.docs=[...byMonth.values()];S.archiveAvailable=true;
   if(S.docs.length)render();archiveCounter("ארכיון מקומי נטען");
@@ -1486,7 +1518,7 @@ $("historyImport").onchange=async e=>{
       if(Math.abs(s.totalPayments-s.mandatoryDeductions-s.net)>2||
          Math.abs(s.net-s.officeDeductions-s.externalDeductions-s.bank)>2)
         throw Error("summary-mismatch");
-      data.push({kind:"payslip",month:x.month,fileName:"ייבוא פרטי · "+x.month,
+      data.push({parserVersion:2,kind:"payslip",month:x.month,fileName:"ייבוא פרטי · "+x.month,
         confidence:90,hourly:x.hourly,hourlySource:"חבילת נתונים מתלוש קיים — אימות מקורי מומלץ",
         ot125:x.ot125,ot150:x.ot150,ot175:x.ot175,ot200:x.ot200,
         oncall:x.oncall,oncallPaidAmount:x.oncallPaidAmount,
@@ -1496,7 +1528,7 @@ $("historyImport").onchange=async e=>{
     for(const x of pack.attendance){
       if(!validMonth(x.month)||![x.ot125,x.ot150,x.ot175,x.ot200].every(validNum))
         throw Error("invalid-att");
-      data.push({kind:"attendance",month:x.month,fileName:"ייבוא פרטי · "+x.month,
+      data.push({parserVersion:2,kind:"attendance",month:x.month,fileName:"ייבוא פרטי · "+x.month,
         confidence:80,ot125:x.ot125,ot150:x.ot150,ot175:x.ot175,ot200:x.ot200,
         verifiedAttendanceSummary:true,monthSource:"user-imported",
         monthCandidates:[],variableComponents:{}});
@@ -1548,14 +1580,17 @@ $("attFiles").onchange=e=>{
 $("requestBtn").onclick=()=>{$("requestText").value=request();$("requestSection").classList.remove("hidden");$("requestSection").scrollIntoView({behavior:"smooth"})};
 $("copyRequestBtn").onclick=async()=>{try{await navigator.clipboard.writeText($("requestText").value);$("copyRequestBtn").textContent="הועתק ✓"}catch{}};
 $("copyBtn").onclick=async()=>{try{await navigator.clipboard.writeText(S.report);$("copyBtn").textContent="הועתק ✓"}catch{}};
-$("recalcBtn").onclick=()=>{
+$("recalcBtn").onclick=async()=>{
   // User can correct uncertain or mistaken document classifications without
   // re-uploading. Retain raw source text only for this in-memory review.
   for(const field of document.querySelectorAll("[data-document-kind]")){
     const idx=Number(field.dataset.documentKind),d=S.docs[idx],kind=field.value;
     if(!d||!["attendance","payslip"].includes(kind)||kind===d.kind)continue;
+    if(!d.rawText){alert("קובץ המקור אינו שמור בארכיון. יש להעלות אותו מחדש כדי לשנות את סוג המסמך.");continue}
     const corrected=parse(kind,d.rawText||"",{name:d.fileName});
     corrected.rawText=d.rawText;
+    corrected.sourceHash=d.sourceHash;
+    corrected.archiveKey=d.archiveKey;
     corrected.userChosenKind=true;
     S.docs[idx]=corrected;
   }
@@ -1572,11 +1607,31 @@ $("recalcBtn").onclick=()=>{
       if(doc.verifiedAttendanceSummary)doc.confidence=96;
     }
   }
+  for(const field of document.querySelectorAll("[data-payslip-month]")){
+    const doc=S.docs[Number(field.dataset.payslipMonth)],value=String(field.value||"");
+    if(doc?.kind==="payslip"&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(value)){
+      doc.month=value.slice(5)+"/"+value.slice(0,4);doc.payMonthConfirmed=true;
+    }
+  }
   render();
+  if(S.archiveAvailable){
+    try{
+      await saveReviewedDocuments(S.docs);
+      for(const d of S.docs)if(d.sourceHash&&d.month!=="לא זוהה"&&!d.needsReparse){
+        S.savedIds.add(d.sourceHash);d.archiveKey=d.kind+":"+d.month;
+      }
+      archiveCounter("האימות הידני נשמר");
+    }catch(error){
+      archiveCounter("האימות תקף למפגש זה בלבד; לא נשמר");
+      alert(error.message==="ARCHIVE_DUPLICATE_MONTH"?
+        "מספר מסמכים משויכים לאותו חודש. יש לתקן את השיוך לפני שמירת האימות.":
+        "האימות נקלט, אך השמירה במכשיר נכשלה. הנתונים זמינים כרגע במפגש זה בלבד.");
+    }
+  }
 };
 
 $("analyzeBtn").onclick=async()=>{
-  if(S.pay.length+S.att.length<2){alert("נא להעלות לפחות שני מסמכים. אפשר לבחור את כל הקבצים באותו מקום וללא סדר מסוים.");return}
+  if(S.pay.length+S.att.length<1){alert("נא להעלות מסמך אחד לפחות. אפשר להוסיף מסמכים להיסטוריה הקיימת וללא סדר מסוים.");return}
   $("analyzeBtn").disabled=true;
   if(!S.docs.length)S.docs=[...S.imported];
   $("requestSection").classList.add("hidden");
@@ -1584,13 +1639,13 @@ $("analyzeBtn").onclick=async()=>{
   const jobs=[...S.pay,...S.att].filter(file=>{
     const key=fileKey(file);if(seen.has(key))return false;seen.add(key);return true;
   }).map(file=>({file}));
-  const failed=[];
+  const failed=[],completed=new Set();
   try{
     for(let i=0;i<jobs.length;i++){
       const j=jobs[i],base=i/jobs.length,span=.94/jobs.length,isPdf=j.file.type==="application/pdf"||j.file.name.toLowerCase().endsWith(".pdf");
       try{
         const id=await fingerprint(j.file);
-        if(S.savedIds.has(id)){prog("כפילות: "+j.file.name,base+span);continue}
+        if(S.savedIds.has(id)){completed.add(fileKey(j.file));prog("כפילות: "+j.file.name,base+span);continue}
         const text=isPdf?await pdfText(j.file,base,span,"auto"):await imageText(j.file,base,span);
         if(!String(text||"").trim())throw new Error("EMPTY_TEXT");
         const detected=detectDocumentKind(text);
@@ -1599,16 +1654,23 @@ $("analyzeBtn").onclick=async()=>{
           parse(detected.kind,text,j.file);
         d.classification=detected;
         d.rawText=text;
+        d.sourceHash=id;
         // A freshly uploaded PDF supersedes a prior local data-pack record
         // for the same document kind and month, without changing other months.
         if(d.kind!=="unknown"&&d.month!=="לא זוהה"&&S.archiveAvailable){
-          const previous=await saveDocument(id,d);
-          if(previous)S.savedIds.delete(previous);
-          S.savedIds.add(id);
+          try{
+            const previous=await saveDocument(id,d);
+            if(previous)S.savedIds.delete(previous);
+            S.savedIds.add(id);d.archiveKey=d.kind+":"+d.month;
+          }catch(error){
+            S.archiveAvailable=false;
+            console.warn("Parsed document retained; archive write failed",error?.message);
+          }
         }
         if(d.month!=="לא זוהה"&&d.kind!=="unknown")
           S.docs=S.docs.filter(old=>old.kind!==d.kind||old.month!==d.month);
         S.docs.push(d);
+        completed.add(fileKey(j.file));
         archiveCounter("עובדו "+(i+1)+" מתוך "+jobs.length);
       }catch(e){
         console.error("Failed file:",j.file.name,e);
@@ -1616,13 +1678,8 @@ $("analyzeBtn").onclick=async()=>{
         // Continue with the rest of the batch instead of aborting everything.
       }
     }
-    const failedNames=new Set(failed.map(f=>f.name));
-    const checks=await Promise.all(jobs.map(async j=>{
-      try{return {file:j.file,id:await fingerprint(j.file)}}catch{return {file:j.file,id:null}}
-    }));
-    const keep=new Set(checks.filter(x=>failedNames.has(x.file.name)||!x.id||!S.savedIds.has(x.id)).map(x=>fileKey(x.file)));
-    S.pay=S.pay.filter(f=>keep.has(fileKey(f)));
-    S.att=S.att.filter(f=>keep.has(fileKey(f)));
+    S.pay=S.pay.filter(f=>!completed.has(fileKey(f)));
+    S.att=S.att.filter(f=>!completed.has(fileKey(f)));
     renderSelectedFiles();
     if(S.docs.length){
       prog("הניתוח הסתיים",1);
