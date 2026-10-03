@@ -33,15 +33,32 @@ export async function savedDocuments(){
  try{return await transact(db,"readonly",s=>s.getAll())}
  finally{db.close()}
 }
-export function saveDocument(id,doc){
+export function archivedDocument(entry){
+ const d=entry?.doc;
+ if(!d||!["payslip","attendance"].includes(d.kind)||! /^(0[1-9]|1[0-2])\/20\d{2}$/.test(d.month||""))return null;
+ const restored={...d,sourceHash:entry.hash||null,archiveKey:entry.id};
+ // Old parsed payroll code/amount tokens were split into three-digit chunks.
+ // Raw files are not retained, so these records must be read from source again.
+ if(d.kind==="payslip"&&d.parserVersion!==2&&!String(d.fileName||"").startsWith("ייבוא פרטי")){
+  Object.assign(restored,{needsReparse:true,payrollCodesVerified:false,guard:null,
+    variableComponents:{},hourly:null,hourlySource:null,oncall:null,oncallPaidAmount:null,
+    ot125:null,ot150:null,ot175:null,ot200:null,otTotal:null,tariffs:{},
+    marginalTax:null,taxGrossYtd:null,incomeTaxPeriod:null});
+ }
+ return restored;
+}
+export function saveDocument(id,doc,{previousKey=null}={}){
  // Keep parsed fields only. Raw employee names/PDF text never enter this archive.
- const {rawText, ...safeDoc}=doc;
+ const {rawText,archiveKey, ...safeDoc}=doc;
  return queued(async()=>{
   const db=await database(),monthlyId=doc.kind+":"+doc.month;
   try{
     // One authoritative record per work month and document kind.
     const previous=await transact(db,"readonly",s=>s.get(monthlyId));
-    await transact(db,"readwrite",s=>s.put({id:monthlyId,hash:id,doc:safeDoc}));
+    await transact(db,"readwrite",s=>{
+      if(previousKey&&previousKey!==monthlyId)s.delete(previousKey);
+      return s.put({id:monthlyId,hash:id,doc:safeDoc});
+    });
     return previous?.hash||null;
   }finally{db.close()}
  });
@@ -50,5 +67,25 @@ export function clearSavedDocuments(){
  return queued(async()=>{const db=await database();
   try{await transact(db,"readwrite",s=>s.clear())}
   finally{db.close()}
+ });
+}
+export function saveReviewedDocuments(docs){
+ const records=docs.filter(d=>d.sourceHash&&["payslip","attendance"].includes(d.kind)&&
+   /^(0[1-9]|1[0-2])\/20\d{2}$/.test(d.month||"")&&!d.needsReparse);
+ const keys=records.map(d=>d.kind+":"+d.month);
+ if(new Set(keys).size!==keys.length)return Promise.reject(new Error("ARCHIVE_DUPLICATE_MONTH"));
+ return queued(async()=>{
+  const db=await database();
+  try{
+   // Delete every old key BEFORE inserting new records: two corrected months
+   // may swap places, and sequential delete/put would erase the first record.
+   await transact(db,"readwrite",store=>{
+    for(const d of records)if(d.archiveKey)store.delete(d.archiveKey);
+    for(const d of records){
+     const {rawText,archiveKey,...safeDoc}=d;
+     store.put({id:d.kind+":"+d.month,hash:d.sourceHash,doc:safeDoc});
+    }
+   });
+  }finally{db.close()}
  });
 }
