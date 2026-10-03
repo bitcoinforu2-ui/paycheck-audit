@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
 import {coverageByPayslip,buildPayrollInquiry} from "./payroll-review.mjs";
-import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments,archivedDocument,saveReviewedDocuments} from "./history-store.mjs";
+import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments,archivedDocument,saveReviewedDocuments} from "./history-store.mjs?v=2";
 const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false,savedIds:new Set(),archiveAvailable:false};
 
 const pdfjs=window.pdfjsLib;
