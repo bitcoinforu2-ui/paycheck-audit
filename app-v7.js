@@ -1453,7 +1453,7 @@ function archiveCounter(message=""){
  const node=$("archiveStatus");if(!node)return;
  const slips=S.docs.filter(d=>d.kind==="payslip").length;
  const reports=S.docs.filter(d=>d.kind==="attendance").length;
- node.textContent=(message?message+" · ":"")+"בארכיון "+slips+" תלושים, "+reports+" דוחות · "+(S.pay.length+S.att.length)+" ממתינים";
+ node.textContent=(message?message+" · ":"")+"נקלטו "+slips+" תלושים, "+reports+" דוחות · "+(S.archiveAvailable?"שמורים במכשיר: "+S.docs.filter(d=>d.archiveKey).length:"השמירה המקומית אינה זמינה")+" · "+(S.pay.length+S.att.length)+" ממתינים";
 }
 async function restoreArchive(){
  try{
@@ -1549,7 +1549,9 @@ $("historyImport").onchange=async e=>{
       try{
         for(const d of data){
           if(current.get(d.kind+":"+d.month)!==d)continue;
-          const previous=await saveDocument("import:"+d.kind+":"+d.month,d);
+          d.sourceHash="import:"+d.kind+":"+d.month;
+          const previous=await saveDocument(d.sourceHash,d);
+          d.archiveKey=d.kind+":"+d.month;
           if(previous)S.savedIds.delete(previous);
         }
       }
