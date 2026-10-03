@@ -4,6 +4,7 @@ on:
     paths:
       - "app-v7.js"
       - "payroll-trends.mjs"
+      - "history-store.mjs"
       - "index.html"
       - "dashboard.css"
       - "dashboard.mjs"

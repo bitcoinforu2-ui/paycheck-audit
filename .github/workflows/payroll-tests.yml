@@ -9,6 +9,7 @@ on:
       - "dashboard.mjs"
       - "payroll-trends.mjs"
       - "payroll-review.mjs"
+      - "history-store.mjs"
       - "tests/**"
       - ".github/workflows/payroll-tests.yml"
   workflow_dispatch:

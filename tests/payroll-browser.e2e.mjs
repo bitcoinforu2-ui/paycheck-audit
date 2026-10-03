@@ -90,6 +90,27 @@ try {
  assert.match(months,/07\/2026/);
  assert.match(months,/08\/2026/);
  assert.match(summary,/מה נדרש להשלמת הבדיקה/,"Unverified months must show an actionable coverage summary");
+ // Confirm source months and ensure the correction survives a page reload.
+ await page.locator('#reviewSection details').evaluate(el=>el.open=true);
+ await page.locator('#recalcBtn').click({force:true});
+ await page.getByText('האימות הידני נשמר',{exact:false}).waitFor({timeout:15000});
+ await page.reload({waitUntil:'domcontentloaded'});
+ await page.locator('#typeSummary').getByText('3 תלושי שכר',{exact:false}).waitFor({timeout:15000});
+ assert.match(await page.locator('#typeSummary').innerText(),/כיסוי נתונים: 3 תלושים עם נוכחות מאומתת/);
+ // Add only ONE source file to the restored multi-month archive.
+ await page.locator('#payFiles').setInputFiles({name:'october.pdf',mimeType:'application/pdf',
+   buffer:Buffer.from(JSON.stringify({kind:'payslip',title:'אוקטובר',paymonth:'10/2026',oncall:true}))});
+ await page.locator('#analyzeBtn').click();
+ await page.locator('#typeSummary').getByText('4 תלושי שכר',{exact:false}).waitFor({timeout:15000});
+ assert.match(await page.locator('#typeSummary').innerText(),/3 דוחות נוכחות/);
+ // A full local archive must not discard a successfully parsed source.
+ await page.evaluate(()=>{IDBObjectStore.prototype.put=function(){throw new DOMException('synthetic full archive','QuotaExceededError')}});
+ await page.locator('#payFiles').setInputFiles({name:'november.pdf',mimeType:'application/pdf',
+   buffer:Buffer.from(JSON.stringify({kind:'payslip',title:'נובמבר',paymonth:'11/2026',oncall:true}))});
+ await page.locator('#analyzeBtn').click();
+ await page.locator('#typeSummary').getByText('5 תלושי שכר',{exact:false}).waitFor({timeout:15000});
+ assert.match(await page.locator('#autoProfile').innerText(),/שמירה מקומית לא זמינה/);
+ assert.match(await page.locator('#archiveStatus').innerText(),/0 ממתינים/);
  assert.deepEqual(errors,[],"browser runtime should emit no JS errors");
  console.log("BROWSER_PASS: six file selection, recognition, three pairings, missing September on-call visible");
  console.log("BROWSER_SUMMARY:",summary.replace(/\s+/g," ").slice(0,300));
