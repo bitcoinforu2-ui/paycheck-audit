@@ -39,7 +39,8 @@ export function archivedDocument(entry){
  const restored={...d,sourceHash:entry.hash||null,archiveKey:entry.id};
  // Old parsed payroll code/amount tokens were split into three-digit chunks.
  // Raw files are not retained, so these records must be read from source again.
- if(d.kind==="payslip"&&d.parserVersion!==2&&!String(d.fileName||"").startsWith("ייבוא פרטי")){
+ if(d.kind==="payslip"&&(![2,3].includes(d.parserVersion)||
+    (d.parserVersion===2&&!d.payrollCodesVerified))&&!String(d.fileName||"").startsWith("ייבוא פרטי")){
   Object.assign(restored,{needsReparse:true,payrollCodesVerified:false,guard:null,
     variableComponents:{},hourly:null,hourlySource:null,oncall:null,oncallPaidAmount:null,
     ot125:null,ot150:null,ot175:null,ot200:null,otTotal:null,tariffs:{},
