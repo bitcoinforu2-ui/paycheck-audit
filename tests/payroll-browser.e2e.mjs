@@ -19,6 +19,7 @@ const mockPdfJs=`
  function payItems(d) {
    const a=[item(d.title+" 2026",400,780),
      item('שכר בסיס תוספות עבודה נוספת החזר הוצאות תש אחרים ברוטו שוטף הפרשים סך תשלומים ניכויי חובה שכר נטו ניכויי משרד ניכויי חו"ז סכום בבנק',0,762)];
+   a.push(item("שכר המינימום לחודש 5000.00 שח",0,770));
    summary.forEach((v,i)=>a.push(item(fmt(v),summaryX[i],749)));
    rows.concat(d.oncall?[["4392",960,40,24,"כוננות חול"]]:[])
     .forEach(([code,amount,tariff,qty,label],i)=>{

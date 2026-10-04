@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
 import {coverageByPayslip,buildPayrollInquiry} from "./payroll-review.mjs";
-import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments,archivedDocument,saveReviewedDocuments} from "./history-store.mjs?v=2";
+import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments,archivedDocument,saveReviewedDocuments} from "./history-store.mjs?v=3";
 const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false,savedIds:new Set(),archiveAvailable:false};
 
 const pdfjs=window.pdfjsLib;
@@ -23,7 +23,7 @@ const median=a=>{a=a.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)retur
 
 function month(text){
   const lines=String(text||"").split(/\n+/);
-  const explicit=lines.filter(l=>/(?:חודש\s*(?:השכר|שכר)|(?:תלוש|שכר).*?לחודש|תלוש\s*שכר\s*[:\-]?\s*\d)/.test(l));
+  const explicit=lines.filter(l=>!/מינימום/.test(l)&&/(?:תלוש|חודש\s*(?:השכר|שכר)|שכר\s*לחודש)/.test(l));
   // Pay-item work periods and document print dates are not the slip month.
   const summary=lines.findIndex(l=>/שכר\s*בסיס|סיסב\s*רכש/.test(l));
   const heading=explicit.length?explicit:lines.slice(0,summary>=0?summary:12);
@@ -117,23 +117,29 @@ function attendancePdfTotals(items,width,height){
     if(!row){row={y,items:[]};rows.push(row)}
     row.items.push({x:x/factor,str});
   }
-  const read=(r,lo,hi)=>{
+  const read=(r,lo,hi,shortHours=false)=>{
     const txt=r.items.filter(it=>it.x>=lo&&it.x<hi).sort((a,b)=>a.x-b.x)
       .map(it=>it.str).join("").replace(/[\s|_]/g,"");
     if(!txt)return {present:false,value:null};
-    const m=txt.match(/^(\d{1,3})[.:](\d{2})$/);
+    const m=txt.match(shortHours?/^(\d{0,3})[.:](\d{2})$/:/^(\d{1,3})[.:](\d{2})$/);
     return {present:true,value:m&&+m[2]<60?Number(m[1])+Number(m[2])/60:null};
   };
   const found=[];
+  const dailyRows=rows.filter(r=>r.items.some(it=>it.x>=567&&it.x<=581&&
+    /^\d{1,2}$/.test(it.str)&&+it.str>=1&&+it.str<=31));
+  const lastDailyY=dailyRows.length>=20?Math.min(...dailyRows.map(r=>r.y)):null;
   for(const row of rows){
     const top=height-row.y;
     if(top<height*.48||top>height*.82)continue;
     const anchors=[[339,370],[308,340],[280,309]].map(a=>read(row,...a));
     if(anchors.some(a=>!Number.isFinite(a.value)))continue;
+    // Minute-only cells also occur on daily rows. The monthly total must be
+    // below the calendar grid, never another day's overtime entry.
+    if(lastDailyY!==null?row.y>=lastDailyY-2:anchors[0].value<24||anchors[1].value<24)continue;
     const cols={ot125:[173,205],ot150:[150,174.9],ot175:[123,149.9],ot200:[96,122.9]};
     const values={},present={};
     for(const [key,range] of Object.entries(cols)){
-      const cell=read(row,...range);values[key]=cell.value;present[key]=cell.present;
+      const cell=read(row,...range,true);values[key]=cell.value;present[key]=cell.present;
     }
     if(Object.values(present).some((p,i)=>p&&!Number.isFinite(Object.values(values)[i])))continue;
     const nonempty=Object.values(present).filter(Boolean).length;
@@ -425,9 +431,16 @@ function metricFromNums(values,rate,factor,exclude=[]){
   }
   return null;
 }
-function metricFromRow(lines,code,rate,factor,labelNumber=null){
+function metricFromRow(lines,code,rate,factor,labelNumber=null,payMonth=null){
   const codeRe=new RegExp("\\b"+code+"\\b");
-  const exact=[...new Set(lines.filter(l=>codeRe.test(l)).map(l=>l.split(" || ")[0].trim()))];
+  let exact=[...new Set(lines.filter(l=>codeRe.test(l)).map(l=>l.split(" || ")[0].trim()))];
+  if(exact.length>1&&monthIndex(payMonth)>0){
+    // Current-pay rows print their period; amount-only adjustment rows are
+    // separate evidence, not another quantity for the current pay period.
+    const dated=exact.filter(line=>[...line.matchAll(/(?:^|\s)(0?[1-9]|1[0-2])\/(20\d{2}|2\d)(?![\d/])/g)]
+      .some(m=>String(+m[1]).padStart(2,"0")+"/"+(m[2].length===2?"20":"")+m[2]===payMonth));
+    if(dated.length===1)exact=dated;
+  }
   // Two pay rows can belong to different retroactive work periods. Do not
   // silently take the first one or infer across neighboring categories.
   if(exact.length>1)return null;
@@ -1008,7 +1021,7 @@ function variablePayEvidence(lines,parsedPayslip){
 function parse(kind,text,file){
   const clean=String(text||"").replace(/[\u200e\u200f]/g," ");
   const lines=clean.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
-  const d={parserVersion:2,kind,fileName:file.name,month:kind==="payslip"?month(clean):"לא זוהה",hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null,guard:null};
+  const d={parserVersion:3,kind,fileName:file.name,month:kind==="payslip"?month(clean):"לא זוהה",hourly:null,ot125:null,ot150:null,ot175:null,ot200:null,oncall:null,tariffs:{},confidence:40,marginalTax:null,taxGrossYtd:null,incomeTaxYtd:null,guard:null};
   if(kind==="payslip"){
     const explicitRate=hourly(lines);
     const inferredRates=[];
@@ -1016,7 +1029,7 @@ function parse(kind,text,file){
     d.hourlySource=null;
     for(const o of OT){
       const pct=Number(o.label.replace(/\D/g,""))||null;
-      const m=metricFromRow(lines,o.code,explicitRate,o.f,pct);
+      const m=metricFromRow(lines,o.code,explicitRate,o.f,pct,d.month);
       if(m){
         d[o.k]=m.q;d.tariffs[o.k]=m.tariff;
         d.payEvidence[o.k]=m.source;
@@ -1027,7 +1040,7 @@ function parse(kind,text,file){
     // Anchor the on-call tariff to the regular rate inferred from verified OT rows
     // when the separate hourly label is not present on the same PDF row.
     const oncallRate=Number.isFinite(explicitRate)?explicitRate:median(inferredRates);
-    let on=metricFromRow(lines,"4392",oncallRate,1,null);
+    let on=metricFromRow(lines,"4392",oncallRate,1,null,d.month);
     if(!on&&!findCodeRow(lines,"4392")){
       const oi=lines.findIndex(l=>/כוננ/.test(l));
       if(oi>=0)on=metricFromNums(lineNums(lines.slice(Math.max(0,oi-2),Math.min(lines.length,oi+3)).join(" ")),oncallRate,1,[4392]);
@@ -1671,6 +1684,7 @@ $("analyzeBtn").onclick=async()=>{
         }
         if(d.month!=="לא זוהה"&&d.kind!=="unknown")
           S.docs=S.docs.filter(old=>old.kind!==d.kind||old.month!==d.month);
+        S.docs=S.docs.filter(old=>old.sourceHash!==id);
         S.docs.push(d);
         completed.add(fileKey(j.file));
         archiveCounter("עובדו "+(i+1)+" מתוך "+jobs.length);
