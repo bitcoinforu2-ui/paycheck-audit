@@ -6,7 +6,7 @@ import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOv
 import {archivedDocument,saveReviewedDocuments} from '../history-store.mjs';
 const source=fs.readFileSync(new URL('../app-v7.js',import.meta.url),'utf8')
  .replace(/^import .*$/gm,'').split('function request(')[0];
-const app=vm.runInNewContext(source+'\n;({S,num,lineNums,month,parse,metricFromRow,codeTotal,variablePayEvidence,assessHourDifferences,renderPayrollGuard,pdfText,incomeTaxFromSlip})',{
+const app=vm.runInNewContext(source+'\n;({S,num,lineNums,month,parse,metricFromRow,codeTotal,variablePayEvidence,assessHourDifferences,renderPayrollGuard,pdfText,incomeTaxFromSlip,attendancePdfTotals})',{
  window:{pdfjsLib:{GlobalWorkerOptions:{}}},document:{getElementById(){return {innerHTML:'',textContent:'',style:{},classList:{add(){},remove(){}}}}},
  VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero,console,Date
 });
@@ -55,7 +55,7 @@ test('displayed component minutes and total difference use the same rounding',()
 test('legacy parsed payroll is withheld until source is re-read; valid records retain provenance',()=>{
  const old=archivedDocument({id:'payslip:09/2026',hash:'old',doc:{kind:'payslip',month:'09/2026',fileName:'pay.pdf',hourly:90,guard:{summary:{}},payrollCodesVerified:true}});
  assert.equal(old.needsReparse,true);assert.equal(old.hourly,null);assert.equal(old.guard,null);assert.equal(old.payrollCodesVerified,false);
- const current=archivedDocument({id:'payslip:09/2026',hash:'new',doc:{kind:'payslip',month:'09/2026',parserVersion:2,hourly:40}});
+ const current=archivedDocument({id:'payslip:09/2026',hash:'new',doc:{kind:'payslip',month:'09/2026',parserVersion:3,hourly:40}});
  assert.equal(current.hourly,40);assert.equal(current.sourceHash,'new');
 });
 test('duplicate reviewed months are rejected before archive mutation',async()=>{
@@ -85,4 +85,33 @@ test('manual month swaps delete old keys before writing new archive records',asy
   assert.equal(records.get('attendance:07/2026').hash,'a');
   assert.equal('rawText' in records.get('attendance:07/2026').doc,false);
  }finally{delete globalThis.window;delete globalThis.indexedDB}
+});
+
+test('minimum-wage monthly notice cannot hide the actual payroll header',()=>{
+ assert.equal(app.month('77 תלוש יוני 2026 || יוני 2026 תלוש 77\nשכר המינימום לחודש 5000.00 שח\nשכר בסיס'),'06/2026');
+});
+test('a dated current-pay row remains readable beside amount-only retro adjustments',()=>{
+ const m=app.metricFromRow(['1125 שעות נוספות 125% 4.00 50.00 06/26 200.00','1125 שעות נוספות 125% -25.00'],'1125',40,1.25,125,'06/2026');
+ assert.equal(m.q,4);assert.equal(m.amount,200);
+});
+test('two different dated rows for the same period still require reconciliation',()=>{
+ assert.equal(app.metricFromRow(['1125 4.00 50.00 06/26 200.00','1125 6.00 50.00 06/26 300.00'],'1125',40,1.25,125,'06/2026'),null);
+});
+const pdfItem=(str,x,y)=>({str,transform:[1,0,0,1,x,y]});
+const monthlyRow=y=>[['168.00',345],['200.09',315],['64.09',285],['9.49',181],['.23',159],['14.31',125],['11.52',99]].map(([s,x])=>pdfItem(s,x,y));
+test('minute-only monthly overtime is read as hours and minutes',()=>{
+ const s=app.attendancePdfTotals(monthlyRow(292),595,842);
+ assert.ok(s);assert.equal(s.values.ot150,23/60);
+});
+test('daily overtime rows never masquerade as the monthly total',()=>{
+ const grid=Array.from({length:31},(_,i)=>pdfItem(String(i+1),570,700-i*11));
+ const daily=[['8.00',345],['10.06',315],['2.06',285],['2.00',181],['.06',159]].map(([s,x])=>pdfItem(s,x,480));
+ const s=app.attendancePdfTotals([...grid,...daily,...monthlyRow(292)],595,842);
+ assert.ok(s);assert.equal(s.values.ot150,23/60);
+});
+test('verified v2 records remain usable while partial v2 slips can be read again',()=>{
+ const record={id:'payslip:06/2026',hash:'same-file',doc:{kind:'payslip',month:'06/2026',parserVersion:2,fileName:'source.pdf',payrollCodesVerified:true,hourly:40}};
+ assert.equal(archivedDocument(record).hourly,40);
+ record.doc.payrollCodesVerified=false;
+ assert.equal(archivedDocument(record).needsReparse,true);
 });
