@@ -149,6 +149,15 @@
       </div>
     </section>
 
+    <section class="dash-panel" aria-label="הסכמים ותנאי העסקה">
+      <div class="panel-heading"><div><h2>הסכמים ותנאים — מקורות לבירור</h2><p>עודכן 05.10.2026 · דוחות היסטוריים דורשים אימות תחולה עדכני</p></div></div>
+      <label>פרופיל העסקה
+        <select id="municipalProfile"><option value="unknown">בחרו מעסיק ואגף</option><option value="inspection">עיריית תל אביב-יפו — אגף הפיקוח העירוני</option></select>
+      </label>
+      <p class="muted-note">המקורות מסייעים לבירור התנאים האישיים. הם אינם הסכם עדכני מלא ואינם משמשים לחישוב חוב אוטומטי. תקן שעות אישי ושינויים לאורך השנים דורשים אסמכתה.</p>
+      <div id="municipalConditions" aria-live="polite"></div>
+    </section>
+
     <section class="dashboard-grid bottom-grid">
       <article class="dash-panel process-panel" id="payroll">
         <div class="panel-heading"><div><h2>תוצאות הבדיקה המפורטות</h2><p>ראיות, התאמת חודשים וממצאים לאימות</p></div><span class="panel-mark blue-mark">▤</span></div>
@@ -182,6 +191,7 @@
     <p class="legal-foot">מסמכי המקור מעובדים בדפדפן ואינם נשלחים לשרת. רק עובד שבחר במפורש להשתתף במחקר יוכל לשתף מדדים חודשיים מעוגלים, ורק לאחר חיבור מאגר מחקר מאובטח. הממצאים הם איתות לבירור בלבד; קביעת חוב דורשת אימות תנאי העסקה וזכאות בפועל.</p>
   </main>
 </div>
+<script type="module" src="municipal-conditions.mjs?v=1"></script>
 <script type="module" src="dashboard.mjs?v=2"></script>
-<script type="module" src="app-v7.js?v=32"></script>
+<script type="module" src="app-v7.js?v=33"></script>
 </body></html>
