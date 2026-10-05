@@ -48,6 +48,18 @@ export function archivedDocument(entry){
  }
  return restored;
 }
+// A stored fingerprint proves identity, not successful extraction. Partial
+// reads must remain retryable after OCR/parser improvements or manual review.
+export function canReuseParsedDocument(doc){
+ if(!doc||doc.needsReparse||doc.parserVersion!==3||
+    !/^(0[1-9]|1[0-2])\/20\d{2}$/.test(doc.month||""))return false;
+ if(!["ot125","ot150","ot175","ot200"].every(k=>
+    Number.isFinite(doc[k])&&doc[k]>=0))return false;
+ if(doc.kind==="payslip")return doc.payrollCodesVerified===true&&
+    Number.isFinite(doc.hourly)&&doc.hourly>0;
+ return doc.kind==="attendance"&&doc.verifiedAttendanceSummary===true&&
+    Number.isFinite(doc.confidence)&&doc.confidence>=90;
+}
 export function saveDocument(id,doc,{previousKey=null}={}){
  // Keep parsed fields only. Raw employee names/PDF text never enter this archive.
  const {rawText,archiveKey, ...safeDoc}=doc;

@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 import {VARIABLE_PAY_COMPONENTS,detectVariablePayTrends,monthIndex,inferAbsentOvertimeZero} from "./payroll-trends.mjs";
 import {coverageByPayslip,buildPayrollInquiry} from "./payroll-review.mjs";
-import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments,archivedDocument,saveReviewedDocuments} from "./history-store.mjs?v=3";
+import {fingerprint,savedDocuments,saveDocument,clearSavedDocuments,archivedDocument,saveReviewedDocuments,canReuseParsedDocument} from "./history-store.mjs?v=4";
 const S={pay:[],att:[],docs:[],imported:[],issues:[],report:"",insufficient:false,savedIds:new Set(),archiveAvailable:false};
 
 const pdfjs=window.pdfjsLib;
@@ -1473,7 +1473,7 @@ async function restoreArchive(){
   const entries=await savedDocuments(),byMonth=new Map();
   for(const entry of entries){
    const d=archivedDocument(entry);
-   if(d){if(!d.needsReparse)S.savedIds.add(entry.hash||entry.id);byMonth.set(d.kind+":"+d.month,d)}
+   if(d){if(canReuseParsedDocument(d))S.savedIds.add(entry.hash||entry.id);byMonth.set(d.kind+":"+d.month,d)}
   }
   S.docs=[...byMonth.values()];S.archiveAvailable=true;
   if(S.docs.length)render();archiveCounter("ארכיון מקומי נטען");
@@ -1633,7 +1633,9 @@ $("recalcBtn").onclick=async()=>{
     try{
       await saveReviewedDocuments(S.docs);
       for(const d of S.docs)if(d.sourceHash&&d.month!=="לא זוהה"&&!d.needsReparse){
-        S.savedIds.add(d.sourceHash);d.archiveKey=d.kind+":"+d.month;
+        if(canReuseParsedDocument(d))S.savedIds.add(d.sourceHash);
+        else S.savedIds.delete(d.sourceHash);
+        d.archiveKey=d.kind+":"+d.month;
       }
       archiveCounter("האימות הידני נשמר");
     }catch(error){
@@ -1676,7 +1678,8 @@ $("analyzeBtn").onclick=async()=>{
           try{
             const previous=await saveDocument(id,d);
             if(previous)S.savedIds.delete(previous);
-            S.savedIds.add(id);d.archiveKey=d.kind+":"+d.month;
+            if(canReuseParsedDocument(d))S.savedIds.add(id);
+            d.archiveKey=d.kind+":"+d.month;
           }catch(error){
             S.archiveAvailable=false;
             console.warn("Parsed document retained; archive write failed",error?.message);
